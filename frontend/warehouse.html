@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warehouse Digital Twin</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --bg:      #0e1117;
+    --surface: #161b27;
+    --border:  #252d3d;
+    --text:    #e2e8f0;
+    --muted:   #64748b;
+    --accent:  #3b82f6;
+  }
+
+  body { margin:0; overflow:hidden; font-family:'DM Sans',sans-serif; background:var(--bg); color:var(--text); }
+
+  /* ── TOPBAR ── */
+  #topbar {
+    position: fixed; top:0; left:0; right:0; height:60px;
+    background: rgba(14,17,23,0.95); backdrop-filter:blur(12px);
+    border-bottom: 1px solid var(--border);
+    display:flex; align-items:center; padding:0 20px; gap:10px; z-index:20;
+  }
+  .brand { font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--accent); letter-spacing:0.1em; margin-right:8px; white-space:nowrap; }
+
+  #searchInput {
+    padding:8px 14px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text); width:220px; outline:none;
+    font-family:'Space Mono',monospace; font-size:0.74rem; transition:border-color 0.2s;
+  }
+  #searchInput:focus { border-color:var(--accent); }
+  #searchInput::placeholder { color:var(--muted); }
+
+  .btn {
+    padding:8px 14px; border-radius:8px; border:none; cursor:pointer;
+    font-family:'DM Sans',sans-serif; font-weight:600; font-size:0.8rem;
+    transition:all 0.18s; white-space:nowrap; display:flex; align-items:center; gap:6px;
+  }
+  #searchBtn       { background:var(--accent); color:#fff; }
+  #searchBtn:hover { background:#2563eb; }
+  #viewToggleBtn  { background:var(--surface); color:var(--text); border:1px solid var(--border); }
+  #viewToggleBtn:hover { border-color:var(--accent); color:var(--accent); }
+  #datasheetBtn   { background:var(--surface); color:var(--text); border:1px solid var(--border); }
+  #datasheetBtn:hover { border-color:#a78bfa; color:#a78bfa; }
+  .btn svg { width:14px; height:14px; flex-shrink:0; }
+
+  /* ── VIEWS ── */
+  #view-3d, #view-network {
+    position:fixed; top:60px; left:0; right:0; bottom:0; transition:opacity 0.3s;
+  }
+  #view-3d.hidden, #view-network.hidden { opacity:0; pointer-events:none; }
+  canvas#bg { display:block; width:100%; height:100%; }
+  #view-network { background:var(--bg); overflow:hidden; }
+  svg#network-svg { width:100%; height:100%; }
+
+  .node-group { cursor:pointer; }
+  .node-ring  { fill:none; stroke-width:1.5; opacity:0.3; }
+  .edge-line  { stroke:#252d3d; stroke-width:1.5; stroke-dasharray:5 4; }
+  @keyframes pulse-ring { 0%{r:44;opacity:.7} 100%{r:64;opacity:0} }
+  .pulse-ring { fill:none; stroke-width:2; animation:pulse-ring 1.5s ease-out infinite; }
+  .node-label  { font-family:'DM Sans',sans-serif; font-size:13px; font-weight:600; fill:#e2e8f0; text-anchor:middle; pointer-events:none; }
+  .node-serial { font-family:'Space Mono',monospace; font-size:10px; fill:#64748b; text-anchor:middle; pointer-events:none; }
+  .node-pct    { font-family:'Space Mono',monospace; font-size:12px; font-weight:700; text-anchor:middle; pointer-events:none; }
+
+  /* ── INFO PANEL ── */
+  #infoPanel {
+    position:fixed; top:80px; right:-360px; width:300px;
+    background:var(--surface); border:1px solid var(--border);
+    padding:24px; border-radius:14px; box-shadow:0 20px 60px rgba(0,0,0,.5);
+    transition:right 0.4s cubic-bezier(.175,.885,.32,1.275); z-index:30;
+  }
+  #infoPanel.active { right:20px; }
+  #infoPanel h2 { margin:0 0 4px; font-size:1.05rem; font-weight:600; }
+  .status-badge { display:inline-flex; align-items:center; gap:7px; margin-bottom:16px; font-size:0.82rem; font-weight:500; }
+  .status-dot   { width:9px; height:9px; border-radius:50%; background:var(--muted); flex-shrink:0; }
+  .data-grid {
+    background:rgba(255,255,255,.03); border:1px solid var(--border);
+    padding:14px; border-radius:10px; display:grid; grid-template-columns:1fr 1fr; gap:14px;
+  }
+  .label { font-size:0.67rem; color:var(--muted); text-transform:uppercase; letter-spacing:.07em; margin-bottom:3px; font-family:'Space Mono',monospace; }
+  .value { font-size:0.93rem; font-weight:600; color:var(--text); }
+  .health-bar-wrap { grid-column:span 2; }
+  .health-bar-bg   { height:5px; background:var(--border); border-radius:4px; overflow:hidden; margin-top:5px; }
+  .health-bar-fill { height:100%; border-radius:4px; transition:width .6s ease; }
+  #closePanel {
+    margin-top:16px; width:100%; padding:9px; border:1px solid var(--border);
+    background:transparent; border-radius:8px; cursor:pointer; color:var(--muted);
+    font-family:'DM Sans',sans-serif; font-size:0.82rem; transition:all .2s;
+  }
+  #closePanel:hover { border-color:var(--accent); color:var(--accent); }
+
+  /* ── DATASHEET MODAL ── */
+  #datasheetModal {
+    position:fixed; inset:0; z-index:50;
+    background:rgba(0,0,0,.75); backdrop-filter:blur(6px);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity 0.25s;
+  }
+  #datasheetModal.open { opacity:1; pointer-events:all; }
+
+  .ds-box {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:16px; width:min(960px,95vw); max-height:80vh;
+    display:flex; flex-direction:column; overflow:hidden;
+    box-shadow:0 30px 80px rgba(0,0,0,.6);
+    transform:translateY(20px); transition:transform 0.25s;
+  }
+  #datasheetModal.open .ds-box { transform:translateY(0); }
+
+  .ds-header {
+    padding:20px 28px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;
+  }
+  .ds-header h3 { margin:0; font-size:1rem; font-family:'Space Mono',monospace; color:var(--accent); letter-spacing:.05em; }
+  .ds-close {
+    background:transparent; border:1px solid var(--border); color:var(--muted);
+    border-radius:6px; padding:5px 12px; cursor:pointer; font-size:0.8rem;
+    font-family:'DM Sans',sans-serif; transition:all .2s;
+  }
+  .ds-close:hover { border-color:#ef4444; color:#ef4444; }
+
+  .ds-body { overflow-y:auto; padding:20px 28px 28px; }
+
+  .ds-summary {
+    display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:24px;
+  }
+  .ds-card {
+    background:rgba(255,255,255,.03); border:1px solid var(--border);
+    border-radius:10px; padding:14px 16px;
+  }
+  .ds-card .ds-card-label { font-size:0.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.07em; font-family:'Space Mono',monospace; margin-bottom:6px; }
+  .ds-card .ds-card-val   { font-size:1.4rem; font-weight:700; }
+
+  .ds-table-wrap { overflow-x:auto; border-radius:10px; border:1px solid var(--border); }
+  table { width:100%; border-collapse:collapse; }
+  thead { background:rgba(255,255,255,.04); }
+  th {
+    padding:11px 16px; text-align:left; font-size:0.7rem; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.07em; font-family:'Space Mono',monospace;
+    cursor:pointer; user-select:none; white-space:nowrap;
+    border-bottom:1px solid var(--border);
+  }
+  th:hover { color:var(--accent); }
+  th .sort-arrow { margin-left:4px; opacity:0.4; }
+  th.sorted .sort-arrow { opacity:1; color:var(--accent); }
+  td {
+    padding:12px 16px; font-size:0.87rem; border-bottom:1px solid rgba(37,45,61,.6);
+    vertical-align:middle;
+  }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:rgba(255,255,255,.025); }
+
+  .badge {
+    display:inline-flex; align-items:center; gap:5px;
+    padding:3px 10px; border-radius:20px; font-size:0.75rem; font-weight:600;
+  }
+  .badge-dot { width:6px; height:6px; border-radius:50%; }
+  .badge-healthy  { background:rgba(34,197,94,.15);  color:#22c55e; }
+  .badge-warning  { background:rgba(245,158,11,.15); color:#f59e0b; }
+  .badge-critical { background:rgba(239,68,68,.15);  color:#ef4444; }
+
+  .serial-code { font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--muted); }
+
+  .ds-body::-webkit-scrollbar { width:6px; }
+  .ds-body::-webkit-scrollbar-track { background:transparent; }
+  .ds-body::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+    "@tweenjs/tween.js": "https://unpkg.com/@tweenjs/tween.js@23.1.1/dist/tween.esm.js",
+    "camera-controls": "https://unpkg.com/camera-controls@2.9.0/dist/camera-controls.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="topbar">
+  <span class="brand">⬡ DIGITAL TWIN</span>
+  <input type="text" id="searchInput" placeholder="Serial number (e.g. SN-GAL-001234)" />
+  <button class="btn" id="searchBtn">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    Find Device
+  </button>
+  <button class="btn" id="viewToggleBtn">
+    <svg id="icon-network" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+    </svg>
+    <svg id="icon-3d" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+    </svg>
+    <span id="viewLabel">Node View</span>
+  </button>
+  <button class="btn" id="datasheetBtn">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+      <polyline points="10 9 9 9 8 9"/>
+    </svg>
+    Datasheet
+  </button>
+
+  <label class="btn" style="cursor: pointer; margin-left: 10px; background: #10b981; color: white; border: none;">
+    <input type="file" id="excelUpload" accept=".xlsx, .xls" style="display: none;" />
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    Upload Plan
+  </label>
+</div>
+
+<div id="view-3d">
+  <canvas id="bg"></canvas>
+</div>
+
+<div id="view-network" class="hidden">
+  <svg id="network-svg"></svg>
+</div>
+
+<div id="infoPanel">
+  <h2 id="uiName">Device Name</h2>
+  <div class="status-badge">
+    <div id="uiStatusDot" class="status-dot"></div>
+    <span id="uiStatusText">Unknown</span>
+  </div>
+  <div class="data-grid">
+    <div><div class="label">Serial</div><div id="uiSerial" class="value">--</div></div>
+    <div><div class="label">Health</div><div id="uiHealth" class="value">--%</div></div>
+    <div style="grid-column:span 2"><div class="label">Last Maintenance</div><div id="uiDate" class="value">--</div></div>
+    <div class="health-bar-wrap">
+      <div class="label">Health Score</div>
+      <div class="health-bar-bg"><div class="health-bar-fill" id="uiHealthBar" style="width:0%"></div></div>
+    </div>
+    <div style="grid-column:span 2" id="warrantySection">
+      <!-- Warranty info dynamically inserted here -->
+    </div>
+  </div>
+  <button id="closePanel">Close Selection</button>
+</div>
+
+<div id="datasheetModal">
+  <div class="ds-box">
+    <div class="ds-header">
+      <h3>⬡ DEVICE DATASHEET</h3>
+      <button class="ds-close" id="dsClose">✕ Close</button>
+    </div>
+    <div class="ds-body" id="dsBody"></div>
+  </div>
+</div>
+
+<div id="palette" style="position: absolute; left: 20px; top: 80px; width: 200px; background: rgba(22, 27, 39, 0.95); border: 1px solid #333; border-radius: 8px; padding: 15px; z-index: 10;">
+  <div style="color: #3dcd58; font-weight: bold; margin-bottom: 10px; font-family: 'DM Sans', sans-serif;">ADD DEVICE</div>
+  
+  <div class="drag-item" draggable="true" data-type="Galaxy_VL" style="padding: 10px; border: 1px solid #444; margin-bottom: 5px; cursor: grab; color: white; display: flex; gap: 10px; align-items: center;">
+    <span style="font-size: 1.2em;">⚡</span> Galaxy VL
+  </div>
+  <div class="drag-item" draggable="true" data-type="NetShelter_SX" style="padding: 10px; border: 1px solid #444; margin-bottom: 5px; cursor: grab; color: white; display: flex; gap: 10px; align-items: center;">
+    <span style="font-size: 1.2em;">🖥</span> NetShelter
+  </div>
+  <div class="drag-item" draggable="true" data-type="Premset_SG" style="padding: 10px; border: 1px solid #444; margin-bottom: 5px; cursor: grab; color: white; display: flex; gap: 10px; align-items: center;">
+    <span style="font-size: 1.2em;">🔌</span> Premset
+  </div>
+  <div class="drag-item" draggable="true" data-type="EVlink_Pro" style="padding: 10px; border: 1px solid #444; margin-bottom: 5px; cursor: grab; color: white; display: flex; gap: 10px; align-items: center;">
+    <span style="font-size: 1.2em;">🚗</span> EV Charger
+  </div>
+
+  <hr style="border-color: #444; margin: 15px 0;">
+  
+  <div style="color: #3dcd58; font-weight: bold; margin-bottom: 10px; font-family: 'DM Sans', sans-serif;">FLOOR LEVEL</div>
+  <select id="floorSelect" style="width: 100%; padding: 8px; background: #161b27; color: white; border: 1px solid #444; border-radius: 4px;">
+    <option value="5">Level 5 (Roof)</option>
+    <option value="4">Level 4</option>
+    <option value="3">Level 3</option>
+    <option value="2">Level 2</option>
+    <option value="1" selected>Level 1 (Ground)</option>
+  </select>
+  
+  <hr style="border-color: #444; margin: 15px 0;">
+  
+  <div style="color: #64748b; font-size: 0.75rem; line-height: 1.4;">
+    <strong>Controls:</strong><br>
+    • Click device to inspect<br>
+    • Press D to drag selected<br>
+    • Arrow keys to move<br>
+    • Press S to save position
+  </div>
+</div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>

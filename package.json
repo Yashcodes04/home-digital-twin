@@ -1,0 +1,23 @@
+{
+  "name": "home-digital-twin",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@tweenjs/tween.js": "^25.0.0",
+    "camera-controls": "^3.1.2",
+    "three": "^0.182.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1"
+  }
+}

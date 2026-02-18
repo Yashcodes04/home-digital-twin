@@ -1,0 +1,43 @@
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+}
+
+#info {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: rgba(0,0,0,0.6);
+  color: white;
+  padding: 10px 15px;
+  border-radius: 8px;
+}
+#tooltip {
+  position: absolute;
+  background: black;
+  color: white;
+  padding: 6px 10px;
+  border-radius: 5px;
+  pointer-events: none;
+  display: none;
+  font-size: 12px;
+}
+/* Ensure the panel starts off-screen */
+#infoPanel {
+    position: absolute; 
+    top: 20px; 
+    right: -400px; /* Start hidden */
+    width: 300px; 
+    background: rgba(255, 255, 255, 0.95); 
+    padding: 25px; 
+    border-radius: 12px; 
+    box-shadow: 0 8px 32px rgba(0,0,0,0.1); 
+    transition: right 0.4s ease-out; /* Smooth slide in */
+    z-index: 100; /* Ensure it's on top of the 3D canvas */
+}
+
+/* This class makes it visible */
+#infoPanel.active { 
+    right: 20px; /* Moves it onto the screen */
+}

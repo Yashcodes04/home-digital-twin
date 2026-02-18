@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warehouse Setup - Digital Twin</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+  
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  :root {
+    --bg: #0e1117;
+    --surface: #161b27;
+    --border: #252d3d;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #3b82f6;
+    --success: #22c55e;
+  }
+  
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  
+  .container {
+    max-width: 900px;
+    width: 100%;
+  }
+  
+  .header {
+    text-align: center;
+    margin-bottom: 50px;
+  }
+  
+  .logo {
+    font-family: 'Space Mono', monospace;
+    font-size: 1.2rem;
+    color: var(--accent);
+    letter-spacing: 0.15em;
+    margin-bottom: 10px;
+  }
+  
+  .header h1 {
+    font-size: 2.5rem;
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  
+  .header p {
+    color: var(--muted);
+    font-size: 1.1rem;
+  }
+  
+  .wizard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+  
+  .step {
+    display: none;
+  }
+  
+  .step.active {
+    display: block;
+    animation: fadeIn 0.4s ease;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
+  .step-title {
+    font-size: 1.5rem;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+  
+  .step-desc {
+    color: var(--muted);
+    margin-bottom: 30px;
+    font-size: 0.95rem;
+  }
+  
+  .form-group {
+    margin-bottom: 24px;
+  }
+  
+  label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text);
+  }
+  
+  input[type="text"],
+  input[type="number"],
+  select {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    color: var(--text);
+    border-radius: 8px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.95rem;
+    transition: border-color 0.2s;
+  }
+  
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  
+  .floor-selector {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-top: 12px;
+  }
+  
+  .floor-option {
+    padding: 20px;
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: rgba(255,255,255,0.02);
+  }
+  
+  .floor-option:hover {
+    border-color: var(--accent);
+    background: rgba(59,130,246,0.1);
+  }
+  
+  .floor-option.selected {
+    border-color: var(--accent);
+    background: rgba(59,130,246,0.15);
+  }
+  
+  .floor-option .number {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  
+  .floor-option .label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  
+  .upload-area {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-bottom: 20px;
+  }
+  
+  .upload-area:hover {
+    border-color: var(--accent);
+    background: rgba(59,130,246,0.05);
+  }
+  
+  .upload-area.dragover {
+    border-color: var(--success);
+    background: rgba(34,197,94,0.1);
+  }
+  
+  .upload-icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+  }
+  
+  .upload-text {
+    color: var(--text);
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+  
+  .upload-hint {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  
+  .file-info {
+    background: rgba(34,197,94,0.1);
+    border: 1px solid rgba(34,197,94,0.3);
+    padding: 12px 16px;
+    border-radius: 8px;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  
+  .file-info.show {
+    display: flex;
+  }
+  
+  .file-info .icon {
+    font-size: 1.5rem;
+  }
+  
+  .file-info .details {
+    flex: 1;
+  }
+  
+  .file-info .filename {
+    font-weight: 600;
+    color: var(--success);
+  }
+  
+  .file-info .filesize {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  
+  .device-count {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    margin-top: 20px;
+  }
+  
+  .count-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+  }
+  
+  .count-card .number {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  
+  .count-card .label {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  
+  .buttons {
+    display: flex;
+    gap: 12px;
+    margin-top: 40px;
+    padding-top: 30px;
+    border-top: 1px solid var(--border);
+  }
+  
+  .btn {
+    padding: 14px 28px;
+    border: none;
+    border-radius: 8px;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    flex: 1;
+  }
+  
+  .btn-primary:hover {
+    background: #2563eb;
+    transform: translateY(-1px);
+  }
+  
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  
+  .btn-secondary:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  .progress-dots {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 30px;
+  }
+  
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: all 0.3s;
+  }
+  
+  .dot.active {
+    background: var(--accent);
+    width: 30px;
+    border-radius: 5px;
+  }
+  
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    margin-bottom: 30px;
+  }
+  
+  .summary-item {
+    background: rgba(255,255,255,0.02);
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  
+  .summary-item .label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  
+  .summary-item .value {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  
+  input[type="file"] {
+    display: none;
+  }
+  
+  .option-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    margin-top: 20px;
+  }
+  
+  .option-card {
+    padding: 30px;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  
+  .option-card:hover {
+    border-color: var(--accent);
+    background: rgba(59,130,246,0.05);
+  }
+  
+  .option-card .icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+  }
+  
+  .option-card .title {
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin-bottom: 8px;
+  }
+  
+  .option-card .desc {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <div class="logo">⬡ SCHNEIDER ELECTRIC</div>
+    <h1>Digital Twin Warehouse</h1>
+    <p>Configure your facility in 3 easy steps</p>
+  </div>
+  
+  <div class="wizard">
+    <div class="progress-dots">
+      <div class="dot active"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+    
+    <!-- STEP 1: Basic Info -->
+    <div class="step active" id="step1">
+      <h2 class="step-title">Warehouse Details</h2>
+      <p class="step-desc">Tell us about your facility</p>
+      
+      <div class="form-group">
+        <label>Warehouse Name *</label>
+        <input type="text" id="warehouseName" placeholder="e.g., Main Distribution Center" required />
+      </div>
+      
+      <div class="form-group">
+        <label>Customer/Company Name</label>
+        <input type="text" id="customerName" placeholder="Your company name" />
+      </div>
+      
+      <div class="form-group">
+        <label>Location</label>
+        <input type="text" id="location" placeholder="City, Country" />
+      </div>
+      
+      <div class="form-group">
+        <label>Number of Floors *</label>
+        <div class="floor-selector">
+          <div class="floor-option selected" data-floors="1">
+            <div class="number">1</div>
+            <div class="label">Floor</div>
+          </div>
+          <div class="floor-option" data-floors="2">
+            <div class="number">2</div>
+            <div class="label">Floors</div>
+          </div>
+          <div class="floor-option" data-floors="3">
+            <div class="number">3</div>
+            <div class="label">Floors</div>
+          </div>
+          <div class="floor-option" data-floors="4">
+            <div class="number">4</div>
+            <div class="label">Floors</div>
+          </div>
+          <div class="floor-option" data-floors="5">
+            <div class="number">5</div>
+            <div class="label">Floors</div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="buttons">
+        <button class="btn btn-primary" onclick="nextStep()">
+          Next: Device Planning →
+        </button>
+      </div>
+    </div>
+    
+    <!-- STEP 2: Device Selection -->
+    <div class="step" id="step2">
+      <h2 class="step-title">Device Planning</h2>
+      <p class="step-desc">How would you like to add devices?</p>
+      
+      <div class="option-cards">
+        <div class="option-card" onclick="selectUploadMethod('excel')">
+          <div class="icon">📊</div>
+          <div class="title">Upload Excel Plan</div>
+          <div class="desc">Import a complete installation plan from a spreadsheet</div>
+        </div>
+        
+        <div class="option-card" onclick="selectUploadMethod('manual')">
+          <div class="icon">🎯</div>
+          <div class="title">Manual Placement</div>
+          <div class="desc">Drag and drop devices in the 3D view</div>
+        </div>
+      </div>
+      
+      <div id="excelUploadSection" style="display: none; margin-top: 30px;">
+        <div class="upload-area" id="uploadArea">
+          <input type="file" id="excelFile" accept=".xlsx, .xls" />
+          <div class="upload-icon">📤</div>
+          <div class="upload-text">Drag & drop your Excel file here</div>
+          <div class="upload-hint">or click to browse (XLSX, XLS)</div>
+        </div>
+        
+        <div class="file-info" id="fileInfo">
+          <div class="icon">✓</div>
+          <div class="details">
+            <div class="filename" id="fileName"></div>
+            <div class="filesize" id="fileSize"></div>
+          </div>
+        </div>
+        
+        <div class="device-count" id="deviceCount" style="display: none;">
+          <div class="count-card">
+            <div class="number" id="deviceTotal">0</div>
+            <div class="label">Devices to Install</div>
+          </div>
+          <div class="count-card">
+            <div class="number" id="deviceTypes">0</div>
+            <div class="label">Device Types</div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="buttons">
+        <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+        <button class="btn btn-primary" onclick="nextStep()">
+          Review & Continue →
+        </button>
+      </div>
+    </div>
+    
+    <!-- STEP 3: Summary -->
+    <div class="step" id="step3">
+      <h2 class="step-title">Review Configuration</h2>
+      <p class="step-desc">Confirm your warehouse setup</p>
+      
+      <div class="summary-grid">
+        <div class="summary-item">
+          <div class="label">Warehouse Name</div>
+          <div class="value" id="summaryName">—</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">Location</div>
+          <div class="value" id="summaryLocation">—</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">Number of Floors</div>
+          <div class="value" id="summaryFloors">—</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">Device Method</div>
+          <div class="value" id="summaryMethod">—</div>
+        </div>
+      </div>
+      
+      <div id="summaryCounts" style="display: none; margin-top: 20px;">
+        <div class="summary-item">
+          <div class="label">Devices from Excel</div>
+          <div class="value" id="summaryDevices">—</div>
+        </div>
+      </div>
+      
+      <div class="buttons">
+        <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+        <button class="btn btn-primary" onclick="createWarehouse()">
+          🚀 Launch Digital Twin
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="setup.js"></script>
+</body>
+</html>
