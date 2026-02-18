@@ -255,23 +255,5 @@ Now that it's running:
    - See README.md for complete guide
    - Check API docs: `http://localhost:8000/docs`
 
----
-
-## 🆘 Need Help?
-
-**Documentation:**
-- Full README: [README.md](README.md)
-- API Reference: [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
-
-**Troubleshooting:**
-- See README.md "Troubleshooting" section
-- Check browser console (F12)
-- Check backend terminal for errors
-
-**Support:**
-- GitHub Issues: https://github.com/yourusername/digital-twin-warehouse/issues
-- Email: your.email@example.com
-
----
 
 **🎉 Congratulations! Your Digital Twin Warehouse is live!**
