@@ -25,14 +25,14 @@ const DEVICE_TEMPLATES = {
     model: "Galaxy VL 500kW",
     notes: "High-efficiency scalable power protection."
   },
-  "NetShelter_SX": {
+  "NetShelter": {
     name: "NetShelter SX Rack",
     type: "Server Rack Enclosure",
     manufacturer: "APC by Schneider",
     model: "AR3100",
     notes: "Standard enclosure for low to medium density."
   },
-  "Premset_SG": {
+  "PremSet": {
     name: "Premset Switchgear",
     type: "MV Switchgear",
     manufacturer: "Schneider Electric",
@@ -924,7 +924,7 @@ function addWarrantyIndicator(mesh, warrantyExpiry) {
 
 const typeCounters = {};
 const loader = new GLTFLoader()
-loader.load('/Changes.glb', gltf => {
+loader.load('/Final.glb', gltf => {
     const model = gltf.scene
     scene.add(model)  // Add model to scene - keeps structure intact
 
@@ -1093,14 +1093,14 @@ animate()
 // ============================================================
 
 const INTERIOR_MAPPING = {
-  "UPS": "Galaxy_VL",
+  //"UPS": "Galaxy_VL",
   "Galaxy VL": "Galaxy_VL",
-  "Rack": "NetShelter_SX",
-  "NetShelter": "NetShelter_SX",
-  "Switchgear": "Premset_SG",
-  "Premset": "Premset_SG",
-  "Meter": "PowerLogic_ION",
-  "EV Charger": "EVlink_Pro"
+  //"Rack": "NetShelter_SX",
+  "NetShelter_SX": "NetShelter",
+  //"Switchgear": "Premset_SG",
+  "Premset_SG":  "PremSet",
+  //"Meter": "PowerLogic_ION",
+  "EVlink_Pro": "EVlink_Pro"
 }
 
 let draggedType = null
