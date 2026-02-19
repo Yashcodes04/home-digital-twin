@@ -244,20 +244,43 @@ async def upload_excel_plan(
             quantity = int(row.get("Quantity", 1))
             floor_number = int(row.get("Floor Number", 1))
             
+            # Get optional coordinates (relative to front door at 0,0,0)
+            pos_x = row.get("Position X")
+            pos_y = row.get("Position Y") 
+            pos_z = row.get("Position Z")
+            
+            # Convert to float if provided, otherwise None
+            coord_x = float(pos_x) if pd.notna(pos_x) else None
+            coord_y = float(pos_y) if pd.notna(pos_y) else None
+            coord_z = float(pos_z) if pd.notna(pos_z) else None
+            
             # Install multiple devices if quantity > 1
             for q in range(quantity):
                 serial = row.get("Serial")
                 if serial and quantity > 1:
                     serial = f"{serial}-{q + 1}"
                 
+                # If coordinates provided, use them; otherwise use default (0, floor_height, 0)
+                if coord_x is not None and coord_z is not None:
+                    # Use provided coordinates
+                    device_x = coord_x
+                    device_z = coord_z
+                    # If Y not provided, calculate from floor
+                    device_y = coord_y if coord_y is not None else (floor_number - 1) * warehouse.floor_height
+                else:
+                    # No coordinates - place at origin for manual positioning
+                    device_x = 0.0
+                    device_y = (floor_number - 1) * warehouse.floor_height
+                    device_z = 0.0
+                
                 device = InstalledDevice(
                     warehouse_id=warehouse_id,
                     product_id=product.id,
                     serial_number=serial or generate_serial_number(product.product_code),
                     floor_number=floor_number,
-                    position_x=0,  # Will be placed manually in 3D
-                    position_y=(floor_number - 1) * warehouse.floor_height,
-                    position_z=0,
+                    position_x=device_x,
+                    position_y=device_y,
+                    position_z=device_z,
                     installation_date=datetime.utcnow(),
                     warranty_expiry=calculate_warranty_expiry(datetime.utcnow(), product.warranty_years),
                     health_score=100,

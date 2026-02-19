@@ -58,7 +58,7 @@
   #view-3d.hidden, #view-network.hidden { opacity:0; pointer-events:none; }
   canvas#bg { display:block; width:100%; height:100%; }
   #view-network { background:var(--bg); overflow:hidden; }
-  svg#network-svg { width:100%; height:100%; }
+  #network-canvas { display:block; width:100%; height:100%; }
 
   .node-group { cursor:pointer; }
   .node-ring  { fill:none; stroke-width:1.5; opacity:0.3; }
@@ -225,7 +225,27 @@
 </div>
 
 <div id="view-network" class="hidden">
-  <svg id="network-svg"></svg>
+  <canvas id="network-canvas"></canvas>
+  <div id="node-legend" style="position: absolute; bottom: 20px; left: 20px; background: rgba(10,10,10,0.9); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+    <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 8px; color: var(--text);">Device Status</div>
+    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; background: #22c55e;"></div>
+        <span>Healthy (80-100%)</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; background: #f59e0b;"></div>
+        <span>Warning (50-79%)</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 12px; height: 12px; border-radius: 50%; background: #ef4444;"></div>
+        <span>Critical (<50%)</span>
+      </div>
+    </div>
+    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.75rem; color: var(--muted);">
+      Click nodes to inspect devices
+    </div>
+  </div>
 </div>
 
 <div id="infoPanel">
@@ -243,10 +263,36 @@
       <div class="health-bar-bg"><div class="health-bar-fill" id="uiHealthBar" style="width:0%"></div></div>
     </div>
     <div style="grid-column:span 2" id="warrantySection">
-      <!-- Warranty info dynamically inserted here -->
+      <!-- Warranty info will be inserted here by JavaScript -->
     </div>
   </div>
-  <button id="closePanel">Close Selection</button>
+
+  <!-- Position Editor -->
+  <div style="margin-top: 16px; padding: 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px;">
+    <div class="label" style="margin-bottom: 8px;">3D Position (Front Door = 0,0,0)</div>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+      <div>
+        <label style="font-size: 0.7rem; color: var(--muted);">X</label>
+        <input type="number" id="posX" step="0.1" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.85rem;" />
+      </div>
+      <div>
+        <label style="font-size: 0.7rem; color: var(--muted);">Y</label>
+        <input type="number" id="posY" step="0.1" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.85rem;" />
+      </div>
+      <div>
+        <label style="font-size: 0.7rem; color: var(--muted);">Z</label>
+        <input type="number" id="posZ" step="0.1" style="width: 100%; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.85rem;" />
+      </div>
+    </div>
+    <button id="updatePositionBtn" style="margin-top: 8px; width: 100%; padding: 8px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: all 0.2s;">
+      📍 Update Position
+    </button>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;">
+    <button id="closePanel" style="margin: 0;">Close</button>
+    <button id="deleteDeviceBtn" style="margin: 0; background: #ef4444; color: white; padding: 9px; border: none; border-radius: 8px; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 0.82rem; transition: all 0.2s;">🗑️ Delete</button>
+  </div>
 </div>
 
 <div id="datasheetModal">
@@ -291,9 +337,14 @@
   <div style="color: #64748b; font-size: 0.75rem; line-height: 1.4;">
     <strong>Controls:</strong><br>
     • Click device to inspect<br>
-    • Press D to drag selected<br>
-    • Arrow keys to move<br>
-    • Press S to save position
+    • Edit position in panel<br>
+    • Press D + arrows to move<br>
+    • Press S to save<br>
+    • Delete button in panel<br>
+    <br>
+    <strong>Coordinates:</strong><br>
+    Front door = (0, 0, 0)<br>
+    +X = Right, +Z = Back
   </div>
 </div>
 

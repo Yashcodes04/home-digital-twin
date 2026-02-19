@@ -125,6 +125,11 @@ class ExcelDeviceRow(BaseModel):
     InstallDate: Optional[str] = Field(None, alias="Install Date")
     Notes: Optional[str] = None
     
+    # Optional 3D Coordinates (relative to front door at 0,0,0)
+    PositionX: Optional[float] = Field(None, alias="Position X")
+    PositionY: Optional[float] = Field(None, alias="Position Y")
+    PositionZ: Optional[float] = Field(None, alias="Position Z")
+    
     class Config:
         populate_by_name = True
 

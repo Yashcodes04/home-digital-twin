@@ -147,6 +147,20 @@ async function updateDeviceHealth(deviceId, healthScore, status) {
   }
 }
 
+async function deleteDevice(deviceId) {
+  try {
+    const response = await fetch(`${API_URL}/devices/${deviceId}`, {
+      method: 'DELETE'
+    });
+    if (!response.ok) throw new Error('Failed to delete device');
+    console.log(`✓ Deleted device ${deviceId}`);
+    return true;
+  } catch (error) {
+    console.error('Failed to delete device:', error);
+    return false;
+  }
+}
+
 async function checkWarrantyAlerts(warehouseId) {
   try {
     const response = await fetch(`${API_URL}/devices/warranty-alerts/${warehouseId}?days_threshold=90`);
@@ -256,6 +270,19 @@ function showInfoPanel(dbKey) {
   bar.style.width      = `${data.health}%`
   bar.style.background = h.hex
 
+  // Populate position inputs
+  const mesh = interactableMeshes.find(m => m.userData.dbKey === dbKey);
+  if (mesh) {
+    document.getElementById('posX').value = mesh.position.x.toFixed(2);
+    document.getElementById('posY').value = mesh.position.y.toFixed(2);
+    document.getElementById('posZ').value = mesh.position.z.toFixed(2);
+  }
+
+  // Add device source indicator
+  const deviceSource = data.db_id ? 
+    '<span style="color: #22c55e;">● Database Device</span>' : 
+    '<span style="color: #f59e0b;">● GLB Template (Not Saved)</span>';
+
   // Add warranty information if available
   if (data.warrantyExpiry) {
     const daysRemaining = Math.floor((new Date(data.warrantyExpiry) - new Date()) / (1000 * 60 * 60 * 24));
@@ -264,12 +291,28 @@ function showInfoPanel(dbKey) {
     const warrantySection = document.getElementById('warrantySection');
     if (warrantySection) {
       warrantySection.innerHTML = `
-        <div class="label">Warranty Status</div>
+        <div class="label">Device Source</div>
+        <div style="font-size: 0.8rem; margin-top: 4px;">${deviceSource}</div>
+        <div class="label" style="margin-top: 12px;">Warranty Status</div>
         <div style="margin-top: 8px; padding: 10px; background: ${warrantyStatus.color}20; border-radius: 6px; border: 1px solid ${warrantyStatus.color}40;">
           <div style="font-size: 0.85rem; color: var(--muted);">Expires: ${new Date(data.warrantyExpiry).toLocaleDateString()}</div>
           <div style="font-size: 1.1rem; font-weight: 600; color: ${warrantyStatus.color}; margin-top: 4px;">
             ${daysRemaining < 0 ? '⚠️ EXPIRED' : `${daysRemaining} days remaining`}
           </div>
+        </div>
+      `;
+    }
+  } else {
+    // No warranty info, just show device source
+    const warrantySection = document.getElementById('warrantySection');
+    if (warrantySection) {
+      warrantySection.innerHTML = `
+        <div class="label">Device Source</div>
+        <div style="font-size: 0.8rem; margin-top: 4px;">${deviceSource}</div>
+        <div style="font-size: 0.75rem; color: var(--muted); margin-top: 8px;">
+          ${data.db_id ? 
+            'This device is saved in the database.' : 
+            'This is a template from the 3D model. Drag from palette to create saved devices.'}
         </div>
       `;
     }
@@ -294,6 +337,176 @@ document.getElementById('closePanel').addEventListener('click', e => {
   hideInfoPanel()
   deselectAll3D(true)
 })
+
+// Delete Device Button
+document.getElementById('deleteDeviceBtn').addEventListener('click', async e => {
+  e.stopPropagation()
+  
+  if (!state3D.selectedMesh) return;
+  
+  const data = DEVICE_DB[state3D.selectedMesh.userData.dbKey];
+  
+  if (!data) {
+    alert('Cannot delete this device - no device information found.');
+    return;
+  }
+  
+  const confirmDelete = confirm(`Delete device "${data.name}" (${data.serial})?\n\nThis action cannot be undone.`);
+  
+  if (!confirmDelete) return;
+  
+  // Store mesh reference
+  const meshToDelete = state3D.selectedMesh;
+  
+  // Check if this is a database device or GLB template device
+  if (data.db_id) {
+    // Database device - delete from database first
+    const success = await deleteDevice(data.db_id);
+    
+    if (!success) {
+      alert('❌ Failed to delete device from database. Please try again.');
+      return;
+    }
+  } else {
+    // GLB template device - just remove from scene
+    console.log(`Removing GLB template device: ${data.serial}`);
+  }
+  
+  // Hide panel and deselect first
+  hideInfoPanel();
+  state3D.selectedMesh = null;
+  
+  // Remove from interactable meshes array immediately
+  const meshIndex = interactableMeshes.indexOf(meshToDelete);
+  if (meshIndex > -1) {
+    interactableMeshes.splice(meshIndex, 1);
+  }
+  
+  // Remove from DEVICE_DB
+  delete DEVICE_DB[meshToDelete.userData.dbKey];
+  
+  // Animate fade out before removal
+  const originalOpacity = meshToDelete.material ? 
+    (meshToDelete.material.opacity !== undefined ? meshToDelete.material.opacity : 1) : 1;
+  
+  if (meshToDelete.material) {
+    meshToDelete.material.transparent = true;
+  }
+  
+  new TWEEN.Tween({ opacity: originalOpacity, scale: 1 })
+    .to({ opacity: 0, scale: 0.1 }, 400)
+    .easing(TWEEN.Easing.Cubic.In)
+    .onUpdate((obj) => {
+      if (meshToDelete.material) {
+        if (Array.isArray(meshToDelete.material)) {
+          meshToDelete.material.forEach(mat => mat.opacity = obj.opacity);
+        } else {
+          meshToDelete.material.opacity = obj.opacity;
+        }
+      }
+      meshToDelete.scale.set(obj.scale, obj.scale, obj.scale);
+    })
+    .onComplete(() => {
+      // Complete cleanup after animation
+      completeMeshDeletion(meshToDelete);
+    })
+    .start();
+  
+  const deviceType = data.db_id ? 'database device' : 'template device';
+  console.log(`✓ Deleting ${deviceType}: ${data.serial}`);
+  
+  // Show success message immediately
+  setTimeout(() => {
+    alert(`✓ ${deviceType} "${data.serial}" removed successfully!`);
+  }, 100);
+});
+
+// Helper function for complete mesh cleanup
+function completeMeshDeletion(mesh) {
+  // Dispose of geometry
+  if (mesh.geometry) {
+    mesh.geometry.dispose();
+  }
+  
+  // Dispose of material(s)
+  if (mesh.material) {
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach(mat => {
+        if (mat.map) mat.map.dispose();
+        if (mat.normalMap) mat.normalMap.dispose();
+        if (mat.emissiveMap) mat.emissiveMap.dispose();
+        mat.dispose();
+      });
+    } else {
+      if (mesh.material.map) mesh.material.map.dispose();
+      if (mesh.material.normalMap) mesh.material.normalMap.dispose();
+      if (mesh.material.emissiveMap) mesh.material.emissiveMap.dispose();
+      mesh.material.dispose();
+    }
+  }
+  
+  // Remove all children (warranty rings, etc.)
+  const children = [...mesh.children]; // Create copy of array
+  children.forEach(child => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (Array.isArray(child.material)) {
+        child.material.forEach(mat => mat.dispose());
+      } else {
+        child.material.dispose();
+      }
+    }
+    mesh.remove(child);
+  });
+  
+  // Remove from parent
+  if (mesh.parent) {
+    mesh.parent.remove(mesh);
+  }
+  
+  // Remove from scene as well (belt and suspenders)
+  scene.remove(mesh);
+  
+  console.log('✓ Mesh completely removed from 3D scene');
+}
+
+// Update Position Button
+document.getElementById('updatePositionBtn').addEventListener('click', async e => {
+  e.stopPropagation();
+  
+  if (!state3D.selectedMesh) return;
+  
+  const data = DEVICE_DB[state3D.selectedMesh.userData.dbKey];
+  
+  // Get new position from inputs
+  const newX = parseFloat(document.getElementById('posX').value);
+  const newY = parseFloat(document.getElementById('posY').value);
+  const newZ = parseFloat(document.getElementById('posZ').value);
+  
+  // Validate
+  if (isNaN(newX) || isNaN(newY) || isNaN(newZ)) {
+    alert('Please enter valid numbers for all coordinates.');
+    return;
+  }
+  
+  // Update mesh position
+  state3D.selectedMesh.position.set(newX, newY, newZ);
+  
+  // Save to database if it's a database device
+  if (data && data.db_id) {
+    await saveDevicePosition(
+      data.db_id,
+      newX,
+      newY,
+      newZ,
+      state3D.selectedMesh.rotation.y * (180 / Math.PI)
+    );
+    alert(`✓ Position updated and saved to database:\n(${newX.toFixed(2)}, ${newY.toFixed(2)}, ${newZ.toFixed(2)})`);
+  } else {
+    // Template device - position updated but not saved to database
+    alert(`✓ Position updated in 3D view:\n(${newX.toFixed(2)}, ${newY.toFixed(2)}, ${newZ.toFixed(2)})\n\n⚠️ This is a template device - position not saved to database.\nDrag from palette to create a saved device.`);
+  }
+});
 
 // ============================================================
 // DATASHEET MODAL
@@ -488,29 +701,45 @@ window.addEventListener('resize', () => {
 })
 
 // ============================================================
-// FLOOR NAVIGATION (INSIDE VIEW)
+// FLOOR NAVIGATION (CLIPPING PLANE APPROACH - KEEPS MODEL INTACT)
 // ============================================================
 
 let FLOOR_HEIGHT = 6.0;  
 const EYE_LEVEL = 2.0;
 
 document.getElementById('floorSelect').addEventListener('change', (e) => {
-  const floorNum = parseInt(e.target.value); 
+  const floorValue = e.target.value;
   
-  if (!floorNum) return;
+  if (floorValue === 'all') {
+    // Show all floors - disable clipping
+    floorPlane.constant = 1000; // Very high value = no clipping
+    
+    // Reset camera to overview
+    controls.setLookAt(
+      HOME_POS.x, HOME_POS.y, HOME_POS.z,
+      HOME_TARGET.x, HOME_TARGET.y, HOME_TARGET.z,
+      true
+    );
+    
+    console.log('🏢 Showing all floors');
+  } else {
+    // Show specific floor - clip above it
+    const floorNum = parseInt(floorValue);
+    const baseHeight = (floorNum - 1) * FLOOR_HEIGHT;
+    const targetY = baseHeight + EYE_LEVEL;
 
-  const baseHeight = (floorNum - 1) * FLOOR_HEIGHT;
-  const targetY    = baseHeight + EYE_LEVEL;
+    console.log(`🚀 Moving inside Floor ${floorNum} (Y=${targetY})`);
 
-  console.log(`🚀 Moving inside Floor ${floorNum} (Y=${targetY})`);
+    // Clip everything above this floor
+    floorPlane.constant = floorNum * FLOOR_HEIGHT;
 
-  if (floorPlane) floorPlane.constant = 1000;
-
-  controls.setLookAt(
-    8, targetY, 8,     
-    0, targetY, 0,     
-    true               
-  );
+    // Move camera inside the floor
+    controls.setLookAt(
+      8, targetY, 8,     
+      0, targetY, 0,     
+      true               
+    );
+  }
 });
 
 // ============================================================
@@ -574,6 +803,13 @@ function updateFloorSelector(numFloors) {
   const selector = document.getElementById('floorSelect');
   selector.innerHTML = '';
   
+  // Add "All Floors" option
+  const allOption = document.createElement('option');
+  allOption.value = 'all';
+  allOption.textContent = '🏢 All Floors';
+  selector.appendChild(allOption);
+  
+  // Add individual floor options (reverse order - top floor first)
   for (let i = numFloors; i >= 1; i--) {
     const option = document.createElement('option');
     option.value = i;
@@ -612,6 +848,14 @@ function spawnDeviceFromDatabase(deviceData) {
   const dbKey = `db_${deviceData.id}`;
   clone.name = dbKey;
 
+  // IMPORTANT: Clone the material and store original
+  if (clone.material) {
+    const clonedMaterial = clone.material.clone();
+    clone.material = clonedMaterial;
+    clone.userData.originalMat = clonedMaterial.clone(); // Store a copy for reset
+    clone.material.clippingPlanes = [floorPlane];
+  }
+
   // Add to DEVICE_DB
   DEVICE_DB[dbKey] = {
     db_id: deviceData.id,
@@ -627,16 +871,14 @@ function spawnDeviceFromDatabase(deviceData) {
   };
 
   clone.userData.dbKey = dbKey;
-  clone.userData.originalMat = clone.material.clone();
-  clone.material.clippingPlanes = [floorPlane];
   
   interactableMeshes.push(clone);
-  scene.add(clone);
+  scene.add(clone);  // Add to scene
 
   // Add warranty visual indicator
   addWarrantyIndicator(clone, deviceData.warranty_expiry);
 
-  console.log(`✓ Spawned ${deviceData.product.name} at (${deviceData.position_x}, ${deviceData.position_y}, ${deviceData.position_z})`);
+  console.log(`✓ Spawned ${deviceData.product.name} on Floor ${deviceData.floor_number} at (${deviceData.position_x}, ${deviceData.position_y}, ${deviceData.position_z})`);
   
   return clone;
 }
@@ -684,7 +926,7 @@ const typeCounters = {};
 const loader = new GLTFLoader()
 loader.load('/Changes.glb', gltf => {
     const model = gltf.scene
-    scene.add(model)
+    scene.add(model)  // Add model to scene - keeps structure intact
 
     model.traverse(child => {
       if (!child.isMesh) return
@@ -790,8 +1032,13 @@ function deselectAll3D(shouldResetCamera = false) {
   if (state3D.blinkTween) { state3D.blinkTween.stop(); state3D.blinkTween = null }
   
   if (state3D.selectedMesh) {
-    state3D.selectedMesh.material = state3D.selectedMesh.userData.originalMat.clone()
-    state3D.selectedMesh.material.clippingPlanes = [floorPlane]
+    // Safety check: only clone if originalMat exists
+    if (state3D.selectedMesh.userData.originalMat) {
+      state3D.selectedMesh.material = state3D.selectedMesh.userData.originalMat.clone()
+      state3D.selectedMesh.material.clippingPlanes = [floorPlane]
+    } else {
+      console.warn('⚠️ originalMat not found, skipping material reset');
+    }
     state3D.selectedMesh = null
   }
 
@@ -1062,3 +1309,386 @@ window.addEventListener('keydown', (e) => {
 
 console.log('🏗️ Digital Twin Warehouse - Database Integration Active');
 console.log('📡 API URL:', API_URL);
+
+// ============================================================
+// 2D NODE VIEW SYSTEM
+// ============================================================
+
+let current2DView = '3d'; // '3d' or 'node'
+const nodeCanvas = document.getElementById('network-canvas');
+const nodeCtx = nodeCanvas ? nodeCanvas.getContext('2d') : null;
+
+// Node view state
+const nodeView = {
+  offsetX: 0,
+  offsetY: 0,
+  scale: 1,
+  isDragging: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  hoveredNode: null,
+  minScale: 0.3,
+  maxScale: 3
+};
+
+// Initialize node canvas
+function initNodeCanvas() {
+  if (!nodeCanvas) return;
+  
+  // Set canvas size
+  nodeCanvas.width = nodeCanvas.clientWidth * window.devicePixelRatio;
+  nodeCanvas.height = nodeCanvas.clientHeight * window.devicePixelRatio;
+  nodeCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  
+  // Center view
+  nodeView.offsetX = nodeCanvas.clientWidth / 2;
+  nodeView.offsetY = nodeCanvas.clientHeight / 2;
+}
+
+// Toggle between 3D and Node view
+document.getElementById('viewToggleBtn')?.addEventListener('click', () => {
+  const view3d = document.getElementById('view-3d');
+  const viewNetwork = document.getElementById('view-network');
+  const viewLabel = document.getElementById('viewLabel');
+  const icon3d = document.getElementById('icon-3d');
+  const iconNetwork = document.getElementById('icon-network');
+  
+  if (current2DView === '3d') {
+    // Switch to Node View
+    view3d.classList.add('hidden');
+    viewNetwork.classList.remove('hidden');
+    viewLabel.textContent = '3D View';
+    icon3d.style.display = 'block';
+    iconNetwork.style.display = 'none';
+    current2DView = 'node';
+    
+    // Initialize and render node view
+    initNodeCanvas();
+    renderNodeView();
+  } else {
+    // Switch to 3D View
+    view3d.classList.remove('hidden');
+    viewNetwork.classList.add('hidden');
+    viewLabel.textContent = 'Node View';
+    icon3d.style.display = 'none';
+    iconNetwork.style.display = 'block';
+    current2DView = '3d';
+  }
+});
+
+// Draw a device node
+function drawNode(x, y, device, isHovered = false) {
+  if (!nodeCtx) return;
+  
+  const health = device.health || 75;
+  let color;
+  
+  // Health-based colors
+  if (health >= 80) {
+    color = '#22c55e'; // Green - Healthy
+  } else if (health >= 50) {
+    color = '#f59e0b'; // Orange - Warning
+  } else {
+    color = '#ef4444'; // Red - Critical
+  }
+  
+  const nodeSize = isHovered ? 20 : 16;
+  
+  // Outer glow for hovered
+  if (isHovered) {
+    nodeCtx.shadowColor = color;
+    nodeCtx.shadowBlur = 20;
+  }
+  
+  // Main circle
+  nodeCtx.fillStyle = color;
+  nodeCtx.beginPath();
+  nodeCtx.arc(x, y, nodeSize, 0, Math.PI * 2);
+  nodeCtx.fill();
+  
+  // Inner circle (darker)
+  nodeCtx.fillStyle = 'rgba(10, 10, 15, 0.5)';
+  nodeCtx.beginPath();
+  nodeCtx.arc(x, y, nodeSize - 4, 0, Math.PI * 2);
+  nodeCtx.fill();
+  
+  nodeCtx.shadowBlur = 0;
+  
+  // Border
+  nodeCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+  nodeCtx.lineWidth = 2;
+  nodeCtx.beginPath();
+  nodeCtx.arc(x, y, nodeSize, 0, Math.PI * 2);
+  nodeCtx.stroke();
+  
+  // Health percentage in center
+  nodeCtx.fillStyle = '#fff';
+  nodeCtx.font = 'bold 10px "Space Mono", monospace';
+  nodeCtx.textAlign = 'center';
+  nodeCtx.textBaseline = 'middle';
+  nodeCtx.fillText(`${Math.round(health)}`, x, y);
+  
+  // Device name below
+  if (isHovered || nodeView.scale > 1) {
+    nodeCtx.fillStyle = '#e2e8f0';
+    nodeCtx.font = '12px "DM Sans", sans-serif';
+    nodeCtx.fillText(device.name || 'Device', x, y + nodeSize + 16);
+    
+    // Serial number
+    nodeCtx.fillStyle = '#64748b';
+    nodeCtx.font = '9px "Space Mono", monospace';
+    nodeCtx.fillText(device.serial || '', x, y + nodeSize + 30);
+  }
+}
+
+// Render 2D Node View
+function renderNodeView() {
+  if (!nodeCanvas || !nodeCtx) return;
+  
+  const width = nodeCanvas.clientWidth;
+  const height = nodeCanvas.clientHeight;
+  
+  // Clear canvas
+  nodeCtx.clearRect(0, 0, width, height);
+  
+  // Draw grid
+  drawGrid();
+  
+  // Get current floor
+  const currentFloor = parseInt(document.getElementById('floorSelect')?.value) || 1;
+  
+  // Draw floor outline
+  const floorWidth = 400;
+  const floorHeight = 300;
+  
+  nodeCtx.save();
+  nodeCtx.translate(nodeView.offsetX, nodeView.offsetY);
+  nodeCtx.scale(nodeView.scale, nodeView.scale);
+  
+  // Floor rectangle
+  nodeCtx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+  nodeCtx.lineWidth = 2 / nodeView.scale;
+  nodeCtx.strokeRect(-floorWidth/2, -floorHeight/2, floorWidth, floorHeight);
+  
+  // Floor label
+  nodeCtx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+  nodeCtx.font = `${14 / nodeView.scale}px "DM Sans", sans-serif`;
+  nodeCtx.textAlign = 'left';
+  nodeCtx.fillText(`FLOOR ${currentFloor}`, -floorWidth/2 + 10, -floorHeight/2 - 10);
+  
+  // Draw warehouse outline (front door reference)
+  nodeCtx.strokeStyle = 'rgba(99, 102, 241, 0.3)';
+  nodeCtx.setLineDash([5, 5]);
+  nodeCtx.strokeRect(-floorWidth/2, -floorHeight/2, floorWidth, floorHeight);
+  nodeCtx.setLineDash([]);
+  
+  // Front door indicator
+  nodeCtx.fillStyle = '#6366f1';
+  nodeCtx.font = `${12 / nodeView.scale}px "DM Sans", sans-serif`;
+  nodeCtx.textAlign = 'center';
+  nodeCtx.fillText('▼ FRONT DOOR (0,0)', 0, floorHeight/2 + 20);
+  
+  // Draw devices from DEVICE_DB
+  const devices = Object.entries(DEVICE_DB).map(([key, data]) => ({
+    key,
+    ...data
+  }));
+  
+  // Filter by current floor if applicable
+  const currentFloorDevices = devices.filter(d => {
+    const dbDevice = interactableMeshes.find(m => m.userData.dbKey === d.key);
+    if (!dbDevice) return false;
+    const deviceFloor = Math.floor(dbDevice.position.y / FLOOR_HEIGHT) + 1;
+    return deviceFloor === currentFloor;
+  });
+  
+  // Draw devices
+  currentFloorDevices.forEach(device => {
+    const mesh = interactableMeshes.find(m => m.userData.dbKey === device.key);
+    if (!mesh) return;
+    
+    // Convert 3D position to 2D (top-down view)
+    const scale2d = 30; // pixels per meter
+    const x2d = mesh.position.x * scale2d;
+    const z2d = -mesh.position.z * scale2d; // Flip Z for top-down view
+    
+    const isHovered = nodeView.hoveredNode === device.key;
+    drawNode(x2d, z2d, device, isHovered);
+  });
+  
+  nodeCtx.restore();
+  
+  // Draw info overlay
+  if (currentFloorDevices.length > 0) {
+    const healthyCount = currentFloorDevices.filter(d => (d.health || 0) >= 80).length;
+    const warningCount = currentFloorDevices.filter(d => (d.health || 0) >= 50 && (d.health || 0) < 80).length;
+    const criticalCount = currentFloorDevices.filter(d => (d.health || 0) < 50).length;
+    
+    nodeCtx.fillStyle = 'rgba(10, 10, 10, 0.8)';
+    nodeCtx.fillRect(10, 10, 200, 100);
+    
+    nodeCtx.fillStyle = '#e2e8f0';
+    nodeCtx.font = '14px "DM Sans", sans-serif';
+    nodeCtx.textAlign = 'left';
+    nodeCtx.fillText(`Floor ${currentFloor} Overview`, 20, 30);
+    
+    nodeCtx.font = '12px "DM Sans", sans-serif';
+    nodeCtx.fillStyle = '#22c55e';
+    nodeCtx.fillText(`● ${healthyCount} Healthy`, 20, 50);
+    nodeCtx.fillStyle = '#f59e0b';
+    nodeCtx.fillText(`● ${warningCount} Warning`, 20, 68);
+    nodeCtx.fillStyle = '#ef4444';
+    nodeCtx.fillText(`● ${criticalCount} Critical`, 20, 86);
+  }
+}
+
+// Draw grid background
+function drawGrid() {
+  if (!nodeCtx) return;
+  
+  const width = nodeCanvas.clientWidth;
+  const height = nodeCanvas.clientHeight;
+  const gridSize = 50 * nodeView.scale;
+  
+  nodeCtx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+  nodeCtx.lineWidth = 1;
+  
+  // Vertical lines
+  for (let x = nodeView.offsetX % gridSize; x < width; x += gridSize) {
+    nodeCtx.beginPath();
+    nodeCtx.moveTo(x, 0);
+    nodeCtx.lineTo(x, height);
+    nodeCtx.stroke();
+  }
+  
+  // Horizontal lines
+  for (let y = nodeView.offsetY % gridSize; y < height; y += gridSize) {
+    nodeCtx.beginPath();
+    nodeCtx.moveTo(0, y);
+    nodeCtx.lineTo(width, y);
+    nodeCtx.stroke();
+  }
+}
+
+// Mouse events for node view
+if (nodeCanvas) {
+  nodeCanvas.addEventListener('mousedown', (e) => {
+    if (current2DView !== 'node') return;
+    
+    nodeView.isDragging = true;
+    nodeView.dragStartX = e.clientX - nodeView.offsetX;
+    nodeView.dragStartY = e.clientY - nodeView.offsetY;
+    nodeCanvas.style.cursor = 'grabbing';
+  });
+  
+  nodeCanvas.addEventListener('mousemove', (e) => {
+    if (current2DView !== 'node') return;
+    
+    if (nodeView.isDragging) {
+      nodeView.offsetX = e.clientX - nodeView.dragStartX;
+      nodeView.offsetY = e.clientY - nodeView.dragStartY;
+      renderNodeView();
+    } else {
+      // Check for hover
+      checkNodeHover(e);
+    }
+  });
+  
+  nodeCanvas.addEventListener('mouseup', () => {
+    nodeView.isDragging = false;
+    nodeCanvas.style.cursor = 'grab';
+  });
+  
+  nodeCanvas.addEventListener('mouseleave', () => {
+    nodeView.isDragging = false;
+    nodeCanvas.style.cursor = 'grab';
+  });
+  
+  nodeCanvas.addEventListener('wheel', (e) => {
+    if (current2DView !== 'node') return;
+    
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const newScale = nodeView.scale * delta;
+    
+    if (newScale >= nodeView.minScale && newScale <= nodeView.maxScale) {
+      nodeView.scale = newScale;
+      renderNodeView();
+    }
+  });
+  
+  nodeCanvas.addEventListener('click', (e) => {
+    if (current2DView !== 'node') return;
+    
+    // Check if clicked on a node
+    const clickedNode = getNodeAtPosition(e);
+    if (clickedNode) {
+      showInfoPanel(clickedNode);
+    }
+  });
+}
+
+// Check if mouse is over a node
+function checkNodeHover(e) {
+  const node = getNodeAtPosition(e);
+  if (node !== nodeView.hoveredNode) {
+    nodeView.hoveredNode = node;
+    renderNodeView();
+  }
+}
+
+// Get node at mouse position
+function getNodeAtPosition(e) {
+  const rect = nodeCanvas.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+  
+  // Transform to world coordinates
+  const worldX = (mouseX - nodeView.offsetX) / nodeView.scale;
+  const worldY = (mouseY - nodeView.offsetY) / nodeView.scale;
+  
+  const currentFloor = parseInt(document.getElementById('floorSelect')?.value) || 1;
+  const scale2d = 30;
+  
+  // Check each device
+  for (const [key, device] of Object.entries(DEVICE_DB)) {
+    const mesh = interactableMeshes.find(m => m.userData.dbKey === key);
+    if (!mesh) continue;
+    
+    const deviceFloor = Math.floor(mesh.position.y / FLOOR_HEIGHT) + 1;
+    if (deviceFloor !== currentFloor) continue;
+    
+    const x2d = mesh.position.x * scale2d;
+    const z2d = -mesh.position.z * scale2d;
+    
+    const distance = Math.sqrt((worldX - x2d) ** 2 + (worldY - z2d) ** 2);
+    if (distance < 20) {
+      return key;
+    }
+  }
+  
+  return null;
+}
+
+// Re-render node view when floor changes
+const originalFloorChangeHandler = document.getElementById('floorSelect')?.onchange;
+document.getElementById('floorSelect')?.addEventListener('change', () => {
+  if (current2DView === 'node') {
+    renderNodeView();
+  }
+});
+
+// Window resize handler for node canvas
+window.addEventListener('resize', () => {
+  if (current2DView === 'node') {
+    initNodeCanvas();
+    renderNodeView();
+  }
+});
+
+// Initialize node canvas on load
+if (nodeCanvas) {
+  nodeCanvas.style.cursor = 'grab';
+}
+
+console.log('📊 2D Node View System Ready');
