@@ -211,7 +211,7 @@ async function createWarehouse() {
       location: warehouseConfig.location,
       num_floors: warehouseConfig.numFloors,
       floor_height: 6.0,
-      model_file: '/models/Changes.glb'
+      model_file: '/models/Final.glb'
     };
     
     const response = await fetch(`${API_URL}/warehouses/`, {
