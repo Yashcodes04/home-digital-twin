@@ -924,7 +924,7 @@ function addWarrantyIndicator(mesh, warrantyExpiry) {
 
 const typeCounters = {};
 const loader = new GLTFLoader()
-loader.load('/Changes.glb', gltf => {
+loader.load('/Changes2.glb', gltf => {
     const model = gltf.scene
     scene.add(model)  // Add model to scene - keeps structure intact
 
