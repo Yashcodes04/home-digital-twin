@@ -16,7 +16,10 @@ let WAREHOUSE_CONFIG = null;
 // ============================================================
 // SCHNEIDER ELECTRIC DEVICE DATABASE (Templates)
 // ============================================================
-
+const meshTemplates = {};
+function normalizeName(name) {
+    return name.toLowerCase().replace(/[0-9_\s-]/g, "");
+}
 const DEVICE_TEMPLATES = {
   "Galaxy_VL": {
     name: "Galaxy VL UPS",
@@ -764,8 +767,27 @@ async function loadWarehouseFromDatabase() {
   CURRENT_WAREHOUSE_ID = localStorage.getItem('currentWarehouseId');
   
   if (!CURRENT_WAREHOUSE_ID) {
-    console.warn('⚠️ No warehouse ID found. Please run setup wizard first.');
-    return;
+    console.warn('⚠️ No warehouse ID found in localStorage');
+    console.log('💡 Checking for available warehouses...');
+    
+    // Try to load the first available warehouse
+    try {
+      const response = await fetch(`${API_URL}/warehouses/`);
+      const warehouses = await response.json();
+      
+      if (warehouses && warehouses.length > 0) {
+        CURRENT_WAREHOUSE_ID = warehouses[0].id;
+        localStorage.setItem('currentWarehouseId', CURRENT_WAREHOUSE_ID);
+        console.log(`✓ Auto-selected Warehouse ID: ${CURRENT_WAREHOUSE_ID} (${warehouses[0].name})`);
+      } else {
+        console.error('❌ No warehouses found. Please run setup wizard first.');
+        alert('⚠️ No warehouse found!\n\nPlease complete the setup wizard:\nhttp://localhost:3000/setup.html');
+        return;
+      }
+    } catch (error) {
+      console.error('❌ Failed to fetch warehouses:', error);
+      return;
+    }
   }
 
   console.log(`📦 Loading warehouse ${CURRENT_WAREHOUSE_ID}...`);
@@ -775,10 +797,15 @@ async function loadWarehouseFromDatabase() {
   
   if (!WAREHOUSE_CONFIG) {
     console.error('❌ Failed to load warehouse configuration');
+    alert(`❌ Warehouse ${CURRENT_WAREHOUSE_ID} not found!\n\nPlease run setup wizard:\nhttp://localhost:3000/setup.html`);
     return;
   }
 
   console.log('✓ Warehouse config loaded:', WAREHOUSE_CONFIG);
+  
+  // Show warehouse info in console
+  console.log(`📋 Current Warehouse: ${WAREHOUSE_CONFIG.name} (ID: ${CURRENT_WAREHOUSE_ID})`);
+  console.log(`🏢 Floors: ${WAREHOUSE_CONFIG.num_floors}, Floor Height: ${WAREHOUSE_CONFIG.floor_height}m`);
 
   // Apply warehouse configuration
   FLOOR_HEIGHT = WAREHOUSE_CONFIG.floor_height || 6.0;
@@ -797,6 +824,9 @@ async function loadWarehouseFromDatabase() {
 
   // Check warranty alerts
   checkWarrantyAlerts(CURRENT_WAREHOUSE_ID);
+  
+  // Show warehouse info in UI
+  updateWarehouseInfo();
 }
 
 function updateFloorSelector(numFloors) {
@@ -820,27 +850,33 @@ function updateFloorSelector(numFloors) {
 }
 
 function spawnDeviceFromDatabase(deviceData) {
+
   const meshIdentifier = deviceData.product.mesh_identifier;
-  
-  // Check if we have a template mesh to clone
-  const templateMesh = interactableMeshes.find(m => m.name.includes(meshIdentifier));
-  
+
+  // 🔥 USE REAL TEMPLATE FROM GLB
+  let templateMesh = meshTemplates[meshIdentifier];
+
+  // fallback fuzzy match
   if (!templateMesh) {
-    console.warn(`⚠️ No 3D model found for ${meshIdentifier}, will spawn when GLB loads`);
-    // Store for later when GLB is loaded
-    if (!window.pendingDatabaseDevices) window.pendingDatabaseDevices = [];
-    window.pendingDatabaseDevices.push(deviceData);
+    templateMesh = Object.values(meshTemplates).find(t =>
+        normalizeName(t.name).includes(normalizeName(meshIdentifier))
+    );
+  }
+
+  if (!templateMesh) {
+    console.warn(`⚠️ No template mesh found for ${meshIdentifier}`);
     return null;
   }
 
-  // Clone the mesh
-  const clone = templateMesh.clone();
+  // ✅ CLONE FROM TEMPLATE
+  const clone = templateMesh.clone(true);
+
   clone.position.set(
     deviceData.position_x,
     deviceData.position_y,
     deviceData.position_z
   );
-  
+
   if (deviceData.rotation_y) {
     clone.rotation.y = deviceData.rotation_y * (Math.PI / 180);
   }
@@ -848,15 +884,16 @@ function spawnDeviceFromDatabase(deviceData) {
   const dbKey = `db_${deviceData.id}`;
   clone.name = dbKey;
 
-  // IMPORTANT: Clone the material and store original
-  if (clone.material) {
-    const clonedMaterial = clone.material.clone();
-    clone.material = clonedMaterial;
-    clone.userData.originalMat = clonedMaterial.clone(); // Store a copy for reset
-    clone.material.clippingPlanes = [floorPlane];
-  }
+  // clone materials properly
+clone.traverse(c => {
+    if (c.material) {
+        c.material = c.material.clone();
 
-  // Add to DEVICE_DB
+        // 🔥 store original for selection restore
+        c.userData.originalMat = c.material.clone();
+    }
+});
+
   DEVICE_DB[dbKey] = {
     db_id: deviceData.id,
     name: deviceData.product.name,
@@ -864,22 +901,23 @@ function spawnDeviceFromDatabase(deviceData) {
     manufacturer: deviceData.product.manufacturer,
     serial: deviceData.serial_number,
     health: deviceData.health_score,
-    lastMaintenance: deviceData.last_maintenance ? new Date(deviceData.last_maintenance).toLocaleDateString() : "N/A",
+    lastMaintenance: deviceData.last_maintenance
+      ? new Date(deviceData.last_maintenance).toLocaleDateString()
+      : "N/A",
     location: `Floor ${deviceData.floor_number}`,
     notes: deviceData.notes || deviceData.product.description,
     warrantyExpiry: deviceData.warranty_expiry
   };
 
   clone.userData.dbKey = dbKey;
-  
-  interactableMeshes.push(clone);
-  scene.add(clone);  // Add to scene
 
-  // Add warranty visual indicator
+  interactableMeshes.push(clone);
+  scene.add(clone);
+
   addWarrantyIndicator(clone, deviceData.warranty_expiry);
 
-  console.log(`✓ Spawned ${deviceData.product.name} on Floor ${deviceData.floor_number} at (${deviceData.position_x}, ${deviceData.position_y}, ${deviceData.position_z})`);
-  
+  console.log(`✓ Spawned ${deviceData.product.name}`);
+
   return clone;
 }
 
@@ -926,8 +964,78 @@ const typeCounters = {};
 const loader = new GLTFLoader()
 loader.load('/Final.glb', gltf => {
     const model = gltf.scene
-    scene.add(model)  // Add model to scene - keeps structure intact
+    scene.add(model)
 
+    // 🔥 ADD IT HERE — immediately after adding model
+
+    console.log("----- GLB TEMPLATE SCAN -----");
+
+    model.traverse(child => {
+        if (!child.isMesh) return;
+
+        const n = normalizeName(child.name);
+        console.log("Mesh:", child.name);
+
+        if (n.includes("galaxyvl") && !meshTemplates["Galaxy_VL"]) {
+            meshTemplates["Galaxy_VL"] = child;
+            console.log("✔ Template → Galaxy_VL");
+        }
+
+        if (n.includes("premset") && !meshTemplates["Premset_SG"]) {
+            meshTemplates["Premset_SG"] = child;
+            console.log("✔ Template → Premset_SG");
+        }
+
+        if (n.includes("netshelter") && !meshTemplates["NetShelter_SX"]) {
+            meshTemplates["NetShelter_SX"] = child;
+            console.log("✔ Template → NetShelter_SX");
+        }
+
+        if (n.includes("solar") && !meshTemplates["Roof_Solar_Array"]) {
+            meshTemplates["Roof_Solar_Array"] = child;
+            console.log("✔ Template → Roof_Solar_Array");
+        }
+
+        if (child.material) {
+            child.material = child.material.clone();
+            child.material.clippingPlanes = [floorPlane];
+            child.material.clipShadows = true;
+        }
+    });
+
+    console.log("Templates found:", Object.keys(meshTemplates));  // Add model to scene - keeps structure intact
+// ✅ ADD THIS BLOCK RIGHT HERE
+    console.log("----- GLB MESH NAMES -----");
+    model.traverse(child => {
+    if (!child.isMesh) return;
+
+    const normalized = normalizeName(child.name);
+
+    // Detect device templates automatically
+    if (normalized.includes("galaxyvl") && !meshTemplates["Galaxy_VL"]) {
+        meshTemplates["Galaxy_VL"] = child;
+    }
+
+    if (normalized.includes("premset") && !meshTemplates["PremSet"]) {
+        meshTemplates["PremSet"] = child;
+    }
+
+    if (normalized.includes("netshelter") && !meshTemplates["NetShelter"]) {
+        meshTemplates["NetShelter"] = child;
+    }
+
+    if (normalized.includes("solar") && !meshTemplates["Solar"]) {
+        meshTemplates["Solar"] = child;
+    }
+
+    // keep your material clipping logic
+    if (child.material) {
+        child.material = child.material.clone();
+        child.material.clippingPlanes = [floorPlane];
+        child.material.clipShadows = true;
+    }
+});
+    console.log("--------------------------");
     model.traverse(child => {
       if (!child.isMesh) return
 
@@ -966,6 +1074,7 @@ loader.load('/Final.glb', gltf => {
         child.userData.originalMat = child.material.clone();
         interactableMeshes.push(child);
       }
+      
     })
     
     console.log(`✅ Loaded ${interactableMeshes.length} interactive devices from GLB.`);
@@ -1134,58 +1243,136 @@ document.getElementById('bg').addEventListener('drop', async (e) => {
 // SPAWN DEVICE AND SAVE TO DATABASE
 // ============================================================
 
-async function spawnDeviceAndSave(typeKey, position) {
-  const templateMesh = interactableMeshes.find(m => m.name.includes(typeKey))
-  
-  if (!templateMesh) {
-    console.error(`❌ Cannot spawn ${typeKey}: No 3D model found in scene to clone.`)
-    return null
-  }
+// ============================================================
+// CORRECTED: SPAWN DEVICE AND SAVE TO DATABASE
+// Fixed: Devices were sinking through floor
+// ============================================================
 
-  // Find product ID from catalog
-  const products = await fetch(`${API_URL}/products/`).then(r => r.json());
-  const product = products.find(p => p.mesh_identifier === typeKey);
-  
-  if (!product) {
-    console.error(`❌ Product ${typeKey} not found in catalog`);
+async function spawnDeviceAndSave(typeKey, position) {
+  console.log(`📦 Attempting spawn: ${typeKey}`);
+
+  // 🔴 Ensure templates exist
+  if (!meshTemplates || Object.keys(meshTemplates).length === 0) {
+    console.error("❌ GLB templates not ready yet");
+    alert("⚠️ Please wait for 3D models to load before adding devices.");
     return null;
   }
 
-  const floorNumber = Math.max(1, Math.floor(position.y / FLOOR_HEIGHT) + 1);
+  // 🔹 Try exact template match first
+  let templateMesh = meshTemplates[typeKey];
 
-  // Create device in database
+  // 🔹 Fallback match using normalized names
+  if (!templateMesh) {
+    const norm = normalizeName(typeKey);
+
+    for (const key in meshTemplates) {
+      if (
+        normalizeName(key).includes(norm) ||
+        norm.includes(normalizeName(key))
+      ) {
+        templateMesh = meshTemplates[key];
+        console.warn(`⚠️ Using fallback template ${key} for ${typeKey}`);
+        break;
+      }
+    }
+  }
+
+  // 🔴 Still not found → abort safely
+  if (!templateMesh) {
+    console.error(`❌ Cannot spawn ${typeKey}: No template mesh found.`);
+    console.log("Available templates:", Object.keys(meshTemplates));
+    alert(`❌ Cannot spawn ${typeKey}\n\nTemplate not found in GLB file.`);
+    return null;
+  }
+
+  // 🔹 Fetch product catalog
+  const products = await fetch(`${API_URL}/products/`).then(r => r.json());
+  
+  // Match ignoring case + allow partial matches
+  const product = products.find(p =>
+    p.mesh_identifier &&
+    p.mesh_identifier.toLowerCase().includes(typeKey.toLowerCase())
+  );
+
+  if (!product) {
+    console.error(`❌ Product ${typeKey} not found in catalog`);
+    alert(`❌ Product ${typeKey} not found in database.\n\nPlease check product catalog.`);
+    return null;
+  }
+
+  // 🔥 CORRECTED FIX: Calculate proper floor position
+  // Get bounding box of the template
+  const bbox = new THREE.Box3().setFromObject(templateMesh);
+  
+  // Calculate how far the bottom of the object is from its origin
+  // If min.y is negative, bottom is below origin
+  // If min.y is positive, bottom is above origin
+  const bottomOffset = bbox.min.y;
+  
+  // 🔥 KEY FIX: Subtract min.y to raise the object
+  // This ensures the BOTTOM of the bbox sits at position.y (floor surface)
+  const adjustedY = position.y - bottomOffset;
+  
+  const floorNumber = Math.max(1, Math.floor(adjustedY / FLOOR_HEIGHT) + 1);
+
+  console.log(`📍 Drop position (raycast hit): Y = ${position.y.toFixed(2)}`);
+  console.log(`📦 Bounding box: min.y = ${bbox.min.y.toFixed(2)}, max.y = ${bbox.max.y.toFixed(2)}`);
+  console.log(`📏 Height: ${(bbox.max.y - bbox.min.y).toFixed(2)}`);
+  console.log(`⬆️  Adjusted Y position: ${adjustedY.toFixed(2)} (raised by ${(-bottomOffset).toFixed(2)})`);
+  console.log(`🏢 Floor number: ${floorNumber}`);
+
+  // 🔹 Create device in backend
   const newDevice = await createDevice(
     product.id,
     CURRENT_WAREHOUSE_ID,
     floorNumber,
     position.x,
-    position.y,
+    adjustedY,  // Use corrected Y position
     position.z
   );
 
   if (!newDevice) {
-    console.error('❌ Failed to create device in database');
+    console.error("❌ Failed to create device in database");
+    alert("❌ Failed to save device to database.\n\nPlease check backend connection.");
     return null;
   }
 
-  // Spawn in 3D scene
+  console.log(`✅ Device created in database:`, newDevice);
+
+  // 🔥 FIX 2: Properly spawn and integrate into DEVICE_DB
+  // Use spawnDeviceFromDatabase which handles everything correctly
   const mesh = spawnDeviceFromDatabase(newDevice);
   
-  if (mesh) {
-    // Animate spawn
-    const startScale = mesh.scale.x;
-    mesh.scale.set(0, 0, 0);
-    new TWEEN.Tween(mesh.scale)
-      .to({x: startScale, y: startScale, z: startScale}, 600)
-      .easing(TWEEN.Easing.Back.Out)
-      .start();
-    
-    console.log(`✅ Device spawned and saved: ${newDevice.serial_number}`);
+  if (!mesh) {
+    console.error("❌ Failed to spawn device in 3D scene");
+    return null;
   }
+
+  // 🔹 Animate spawn
+  const startScale = 1;
+  mesh.scale.set(0, 0, 0);
+
+  new TWEEN.Tween(mesh.scale)
+    .to({ x: startScale, y: startScale, z: startScale }, 600)
+    .easing(TWEEN.Easing.Back.Out)
+    .start();
+
+  // 🔹 Refresh datasheet to show new device
+  buildDatasheet();
   
+  // 🔹 Update warehouse info
+  updateWarehouseInfo();
+
+  console.log(`✅ Device spawned and fully integrated: ${newDevice.serial_number}`);
+  console.log(`✓ Final position: (${mesh.position.x.toFixed(2)}, ${mesh.position.y.toFixed(2)}, ${mesh.position.z.toFixed(2)})`);
+  
+  // 🔹 Select the new device to show info panel
+  setTimeout(() => {
+    select3DMesh(mesh);
+  }, 650); // After spawn animation
+
   return mesh;
 }
-
 // ============================================================
 // EXCEL UPLOAD
 // ============================================================
@@ -1196,11 +1383,14 @@ async function handleExcelUpload(e) {
   const file = e.target.files[0]
   if (!file) return
   
+  // Check if warehouse is loaded
   if (!CURRENT_WAREHOUSE_ID) {
-    alert('Please complete warehouse setup first');
+    alert('⚠️ No warehouse selected!\n\nPlease run the setup wizard first:\nhttp://localhost:3000/setup.html');
     return;
   }
 
+  console.log(`📤 Uploading Excel to Warehouse ID: ${CURRENT_WAREHOUSE_ID}`);
+  
   const formData = new FormData();
   formData.append('file', file);
 
@@ -1212,33 +1402,77 @@ async function handleExcelUpload(e) {
 
     const result = await response.json();
     
+    console.log('📊 Upload Result:', result);
+    
     if (result.success) {
-      alert(`✅ Installed ${result.installed_count} devices from Excel.\n\nDevices will appear in 3D view.`);
+      console.log(`✅ Successfully installed ${result.installed_count} devices`);
       
-      // Reload devices from database
-      const devices = await fetchDevices(CURRENT_WAREHOUSE_ID);
+      if (result.errors && result.errors.length > 0) {
+        console.warn('⚠️ Some errors occurred:', result.errors);
+        alert(`✅ Installed ${result.installed_count} devices\n\n⚠️ ${result.errors.length} warnings:\n${result.errors.slice(0, 3).join('\n')}${result.errors.length > 3 ? '\n...' : ''}`);
+      } else {
+        alert(`✅ Successfully installed ${result.installed_count} devices!\n\nDevices will appear in 3D view.\nRefreshing...`);
+      }
       
-      // Clear existing database devices
+      // Clear existing database devices from scene
+      console.log('🧹 Clearing existing database devices...');
       Object.keys(DEVICE_DB).forEach(key => {
         if (key.startsWith('db_')) {
+          const mesh = interactableMeshes.find(m => m.userData.dbKey === key);
+          if (mesh) {
+            scene.remove(mesh);
+            if (mesh.geometry) mesh.geometry.dispose();
+            if (mesh.material) {
+              if (Array.isArray(mesh.material)) {
+                mesh.material.forEach(mat => mat.dispose());
+              } else {
+                mesh.material.dispose();
+              }
+            }
+          }
           delete DEVICE_DB[key];
         }
       });
       
-      // Remove existing meshes
+      // Remove from interactable meshes array
       interactableMeshes = interactableMeshes.filter(m => !m.name.startsWith('db_'));
       
-      // Respawn all devices
-      devices.forEach(device => spawnDeviceFromDatabase(device));
+      // Reload devices from database
+      console.log(`🔄 Reloading devices from warehouse ${CURRENT_WAREHOUSE_ID}...`);
+      const devices = await fetchDevices(CURRENT_WAREHOUSE_ID);
+      console.log(`✓ Found ${devices.length} devices in database`);
       
-      buildDatasheet(); // Refresh datasheet
+      // Respawn all devices
+      let spawnedCount = 0;
+      devices.forEach(device => {
+        const spawned = spawnDeviceFromDatabase(device);
+        if (spawned) spawnedCount++;
+      });
+      
+      console.log(`✅ Spawned ${spawnedCount} devices in 3D view`);
+      
+      // Refresh datasheet
+      buildDatasheet();
+      
+      // Update warehouse info display
+      updateWarehouseInfo();
+      
+      // Show success message with device count
+      setTimeout(() => {
+        alert(`✅ Upload Complete!\n\n${devices.length} devices now visible in 3D view.\n\nTip: Use floor selector to navigate between floors.`);
+      }, 500);
+      
     } else {
-      alert(`⚠️ Upload completed with errors:\n${result.errors.join('\n')}`);
+      console.error('❌ Upload failed:', result);
+      alert(`❌ Upload failed!\n\nErrors:\n${result.errors.join('\n')}`);
     }
   } catch (error) {
-    console.error('Excel upload error:', error);
-    alert('❌ Failed to upload Excel file. Make sure backend is running.');
+    console.error('❌ Excel upload error:', error);
+    alert(`❌ Failed to upload Excel file!\n\nError: ${error.message}\n\nMake sure:\n1. Backend is running\n2. Product names match exactly\n3. Excel file format is correct`);
   }
+  
+  // Clear file input so same file can be uploaded again
+  e.target.value = '';
 }
 
 // ============================================================
@@ -1246,13 +1480,26 @@ async function handleExcelUpload(e) {
 // ============================================================
 
 function renderNetwork() {
-  const svg = document.getElementById('network-svg')
-  svg.innerHTML = '' 
-  const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-  txt.setAttribute('x', '50%'); txt.setAttribute('y', '50%'); 
-  txt.setAttribute('fill', 'white'); txt.setAttribute('text-anchor', 'middle')
-  txt.textContent = `Network View: ${Object.keys(DEVICE_DB).length} Active Nodes`
-  svg.appendChild(txt)
+  const svg = document.getElementById('network-svg');
+
+  // 🔴 prevent crash if panel not in DOM yet
+  if (!svg) {
+    console.warn("⚠️ network-svg not found, skipping renderNetwork()");
+    return;
+  }
+
+  svg.innerHTML = '';
+
+  const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  txt.setAttribute('x', '50%');
+  txt.setAttribute('y', '50%');
+  txt.setAttribute('fill', 'white');
+  txt.setAttribute('text-anchor', 'middle');
+  txt.setAttribute('dominant-baseline', 'middle'); // 🔥 centers vertically
+
+  txt.textContent = `Network View: ${Object.keys(DEVICE_DB).length} Active Nodes`;
+
+  svg.appendChild(txt);
 }
 
 // ============================================================
@@ -1302,6 +1549,50 @@ window.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// ============================================================
+// WAREHOUSE INFO DISPLAY
+// ============================================================
+
+function showWarehouseInfo() {
+  if (!WAREHOUSE_CONFIG) return;
+  
+  // Remove existing info if any
+  const existing = document.getElementById('warehouseInfo');
+  if (existing) existing.remove();
+  
+  // Create info display
+  const infoDiv = document.createElement('div');
+  infoDiv.id = 'warehouseInfo';
+  infoDiv.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    background: rgba(10, 10, 15, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem;
+    color: #e2e8f0;
+    z-index: 10;
+    backdrop-filter: blur(10px);
+  `;
+  
+  infoDiv.innerHTML = `
+    <div style="font-weight: 600; margin-bottom: 4px;">📋 ${WAREHOUSE_CONFIG.name}</div>
+    <div style="color: #64748b; font-size: 0.75rem;">
+      ID: ${CURRENT_WAREHOUSE_ID} • ${WAREHOUSE_CONFIG.num_floors} Floors • ${Object.keys(DEVICE_DB).length} Devices Loaded
+    </div>
+  `;
+  
+  document.body.appendChild(infoDiv);
+}
+
+// Update warehouse info when devices change
+function updateWarehouseInfo() {
+  showWarehouseInfo();
+}
 
 // ============================================================
 // INITIALIZE
@@ -1692,3 +1983,148 @@ if (nodeCanvas) {
 }
 
 console.log('📊 2D Node View System Ready');
+// ============================================================
+// DATASHEET DOWNLOAD FUNCTIONALITY
+// ============================================================
+
+// Add this button to your HTML datasheet modal header (next to close button):
+/*
+<button id="downloadDatasheetBtn" style="
+  background: #22c55e;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 10px;
+">
+  📥 Download CSV
+</button>
+*/
+
+// Add this event listener near your other datasheet button listeners
+document.getElementById('downloadDatasheetBtn')?.addEventListener('click', downloadDatasheet);
+
+function downloadDatasheet() {
+  const devices = Object.entries(DEVICE_DB).map(([key, d]) => ({ key, ...d }));
+
+  if (devices.length === 0) {
+    alert('⚠️ No devices to download!\n\nAdd some devices first.');
+    return;
+  }
+
+  // Create CSV content
+  const headers = ['Device Name', 'Type', 'Manufacturer', 'Serial Number', 'Health (%)', 'Status', 'Location', 'Last Maintenance', 'Warranty Expiry', 'Notes', 'Source'];
+  
+  const rows = devices.map(device => {
+    const health = device.health || 0;
+    const status = health >= 80 ? 'Healthy' : health >= 50 ? 'Warning' : 'Critical';
+    const source = device.db_id ? 'Database' : 'Template';
+    
+    return [
+      device.name || '',
+      device.type || '',
+      device.manufacturer || '',
+      device.serial || '',
+      health,
+      status,
+      device.location || '',
+      device.lastMaintenance || 'N/A',
+      device.warrantyExpiry ? new Date(device.warrantyExpiry).toLocaleDateString() : 'N/A',
+      (device.notes || '').replace(/,/g, ';'), // Replace commas in notes
+      source
+    ];
+  });
+
+  // Build CSV string
+  let csv = headers.join(',') + '\n';
+  rows.forEach(row => {
+    csv += row.map(cell => {
+      // Escape cells that contain commas, quotes, or newlines
+      const cellStr = String(cell);
+      if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+        return '"' + cellStr.replace(/"/g, '""') + '"';
+      }
+      return cellStr;
+    }).join(',') + '\n';
+  });
+
+  // Create download link
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  
+  const timestamp = new Date().toISOString().slice(0, 10);
+  const warehouseName = WAREHOUSE_CONFIG ? WAREHOUSE_CONFIG.name.replace(/\s+/g, '_') : 'Warehouse';
+  const filename = `${warehouseName}_Devices_${timestamp}.csv`;
+  
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  
+  console.log(`✅ Downloaded datasheet: ${filename}`);
+  alert(`✅ Downloaded ${devices.length} devices to:\n${filename}`);
+}
+
+// Alternative: Download as JSON for more detailed export
+function downloadDatasheetJSON() {
+  const devices = Object.entries(DEVICE_DB).map(([key, d]) => ({ 
+    key, 
+    ...d,
+    // Add 3D position data
+    position: (() => {
+      const mesh = interactableMeshes.find(m => m.userData.dbKey === key);
+      if (mesh) {
+        return {
+          x: mesh.position.x,
+          y: mesh.position.y,
+          z: mesh.position.z,
+          rotation_y: mesh.rotation.y * (180 / Math.PI)
+        };
+      }
+      return null;
+    })()
+  }));
+
+  if (devices.length === 0) {
+    alert('⚠️ No devices to download!');
+    return;
+  }
+
+  const data = {
+    warehouse: WAREHOUSE_CONFIG ? {
+      id: CURRENT_WAREHOUSE_ID,
+      name: WAREHOUSE_CONFIG.name,
+      num_floors: WAREHOUSE_CONFIG.num_floors,
+      floor_height: WAREHOUSE_CONFIG.floor_height
+    } : null,
+    export_date: new Date().toISOString(),
+    device_count: devices.length,
+    devices: devices
+  };
+
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  
+  const timestamp = new Date().toISOString().slice(0, 10);
+  const warehouseName = WAREHOUSE_CONFIG ? WAREHOUSE_CONFIG.name.replace(/\s+/g, '_') : 'Warehouse';
+  const filename = `${warehouseName}_Full_Export_${timestamp}.json`;
+  
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  
+  console.log(`✅ Downloaded full export: ${filename}`);
+  alert(`✅ Downloaded full data export to:\n${filename}\n\nThis includes 3D positions and complete device info.`);
+}
