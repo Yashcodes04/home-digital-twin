@@ -351,7 +351,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
     products_data = [
         {
             "product_code": "GALAXY_VL_500",
-            "name": "Galaxy VL UPS 500kW",
+            "name": "Galaxy VL UPS",
             "type": "Uninterruptible Power Supply",
             "category": "Power Protection",
             "model_number": "Galaxy VL 500",
@@ -367,7 +367,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
         },
         {
             "product_code": "NETSHELTER_SX_AR3100",
-            "name": "NetShelter SX 42U Rack",
+            "name": "NetShelter SX Rack",
             "type": "Server Rack Enclosure",
             "category": "Infrastructure",
             "model_number": "AR3100",
@@ -381,7 +381,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
         },
         {
             "product_code": "PREMSET_15KV",
-            "name": "Premset Switchgear 15kV",
+            "name": "Premset Switchgear",
             "type": "MV Switchgear",
             "category": "Power Distribution",
             "model_number": "Premset 15kV",
@@ -410,7 +410,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
         },
         {
             "product_code": "EVLINK_PRO_AC",
-            "name": "EVlink Pro AC Charger",
+            "name": "EVlink Pro AC",
             "type": "EV Charging Station",
             "category": "E-Mobility",
             "model_number": "EVlink Pro",
@@ -426,7 +426,7 @@ def seed_demo_data(db: Session = Depends(get_db)):
         },
         {
             "product_code": "CONEXT_CL",
-            "name": "EcoStruxure Solar Inverter",
+            "name": "EcoStruxure Solar",
             "type": "Solar Inverter",
             "category": "Renewable Energy",
             "model_number": "Conext CL",
