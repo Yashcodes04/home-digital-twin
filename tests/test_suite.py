@@ -36,13 +36,13 @@ try:
     print(f"   Found {len(products)} products:")
     
     expected_names = {
-        "Galaxy VL UPS": "Galaxy_VL",
-        "NetShelter SX Rack": "NetShelter",
-        "Premset Switchgear": "PremSet",
-        "PowerLogic ION9000": "PowerLogic_ION",
-        "EVlink Pro AC": "EVlink_Pro",
-        "EcoStruxure Solar": "Roof_Solar_Array"
-    }
+    "Galaxy VL UPS": "Galaxy_VL",
+    "NetShelter SX Rack": "NetShelter_SX",
+    "Premset Switchgear": "Premset_SG",
+    "PowerLogic ION9000": "PowerLogic_ION",
+    "EVlink Pro AC": "EVlink_Pro",
+    "EcoStruxure Solar": "Roof_Solar_Array"
+}
     
     all_correct = True
     for product in products:

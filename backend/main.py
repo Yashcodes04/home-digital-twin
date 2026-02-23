@@ -272,7 +272,7 @@ async def upload_excel_plan(
                     device_x = 0.0
                     device_y = (floor_number - 1) * warehouse.floor_height
                     device_z = 0.0
-                
+                health_val = int(row.get("Health Score", 100))
                 device = InstalledDevice(
                     warehouse_id=warehouse_id,
                     product_id=product.id,
@@ -283,8 +283,8 @@ async def upload_excel_plan(
                     position_z=device_z,
                     installation_date=datetime.utcnow(),
                     warranty_expiry=calculate_warranty_expiry(datetime.utcnow(), product.warranty_years),
-                    health_score=100,
-                    status="Healthy",
+                    health_score=health_val,
+                    status="Healthy" if health_val >= 80 else "Warning" if health_val >= 50 else "Critical",
                     notes=row.get("Notes", "Imported from Excel")
                 )
                 db.add(device)

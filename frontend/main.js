@@ -762,7 +762,85 @@ function getDeviceTypeFromMeshName(meshName) {
 // ============================================================
 // LOAD WAREHOUSE FROM DATABASE
 // ============================================================
-
+function applyHealthVisuals(mesh, healthScore) {
+  const h = getHealthInfo(healthScore);
+  
+  mesh.traverse(c => {
+    if (!c.isMesh) return;
+    
+    if (c.material) {
+      // Apply emissive tint based on health
+      if (healthScore >= 80) {
+        // Healthy - no tint, normal appearance
+        c.material.emissive = new THREE.Color(0x000000);
+        c.material.emissiveIntensity = 0;
+      } else if (healthScore >= 50) {
+        // Warning - subtle orange glow
+        c.material.emissive = new THREE.Color(0xf59e0b);
+        c.material.emissiveIntensity = 0.3;
+      } else {
+        // Critical - red pulsing glow
+        c.material.emissive = new THREE.Color(0xef4444);
+        c.material.emissiveIntensity = 0.5;
+        
+        // Pulse animation for critical devices
+        new TWEEN.Tween({ intensity: 0.3 })
+          .to({ intensity: 0.8 }, 800)
+          .yoyo(true)
+          .repeat(Infinity)
+          .onUpdate((obj) => {
+            c.material.emissiveIntensity = obj.intensity;
+          })
+          .start();
+      }
+      
+      // Store original emissive for selection restore
+      c.userData.originalEmissive = c.material.emissive.clone();
+      c.userData.originalEmissiveIntensity = c.material.emissiveIntensity;
+    }
+  });
+  
+  // Add floating health label above device
+  addHealthLabel(mesh, healthScore, h);
+}
+function addHealthLabel(mesh, healthScore, healthInfo) {
+  // Only show label for warning/critical devices
+  if (healthScore >= 80) return;
+  
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 48;
+  const ctx = canvas.getContext('2d');
+  
+  // Background
+  ctx.fillStyle = healthScore >= 50 ? 'rgba(245,158,11,0.9)' : 'rgba(239,68,68,0.9)';
+  ctx.roundRect(0, 0, 128, 48, 8);
+  ctx.fill();
+  
+  // Text
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 20px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`⚠ ${healthScore}%`, 64, 24);
+  
+  const texture = new THREE.CanvasTexture(canvas);
+  const spriteMaterial = new THREE.SpriteMaterial({ 
+    map: texture,
+    transparent: true,
+    depthTest: false  // Always visible, not hidden behind walls
+  });
+  
+  const sprite = new THREE.Sprite(spriteMaterial);
+  
+  // Position above the device
+  const bbox = new THREE.Box3().setFromObject(mesh);
+  const height = bbox.max.y - bbox.min.y;
+  sprite.position.set(0, height + 0.5, 0);
+  sprite.scale.set(1.5, 0.6, 1);
+  
+  mesh.add(sprite);
+}
 async function loadWarehouseFromDatabase() {
   CURRENT_WAREHOUSE_ID = localStorage.getItem('currentWarehouseId');
   
@@ -853,10 +931,8 @@ function spawnDeviceFromDatabase(deviceData) {
 
   const meshIdentifier = deviceData.product.mesh_identifier;
 
-  // 🔥 USE REAL TEMPLATE FROM GLB
   let templateMesh = meshTemplates[meshIdentifier];
 
-  // fallback fuzzy match
   if (!templateMesh) {
     templateMesh = Object.values(meshTemplates).find(t =>
         normalizeName(t.name).includes(normalizeName(meshIdentifier))
@@ -868,12 +944,24 @@ function spawnDeviceFromDatabase(deviceData) {
     return null;
   }
 
-  // ✅ CLONE FROM TEMPLATE
+  // Calculate bbox from local space to get true bottom offset
+  const tempClone = templateMesh.clone(true);
+  tempClone.position.set(0, 0, 0);
+  tempClone.rotation.set(0, 0, 0);
+  tempClone.scale.set(1, 1, 1);
+  tempClone.updateMatrixWorld(true);
+  const bbox = new THREE.Box3().setFromObject(tempClone);
+  const bottomOffset = bbox.min.y;
+  const adjustedY = deviceData.position_y - bottomOffset;
+
+  console.log(`📦 ${deviceData.product.name}: localBottom=${bottomOffset.toFixed(2)}, adjustedY=${adjustedY.toFixed(2)}`);
+
+  // Clone the actual mesh to place in scene
   const clone = templateMesh.clone(true);
 
   clone.position.set(
     deviceData.position_x,
-    deviceData.position_y,
+    adjustedY,
     deviceData.position_z
   );
 
@@ -884,15 +972,12 @@ function spawnDeviceFromDatabase(deviceData) {
   const dbKey = `db_${deviceData.id}`;
   clone.name = dbKey;
 
-  // clone materials properly
-clone.traverse(c => {
+  clone.traverse(c => {
     if (c.material) {
         c.material = c.material.clone();
-
-        // 🔥 store original for selection restore
         c.userData.originalMat = c.material.clone();
     }
-});
+  });
 
   DEVICE_DB[dbKey] = {
     db_id: deviceData.id,
@@ -913,14 +998,14 @@ clone.traverse(c => {
 
   interactableMeshes.push(clone);
   scene.add(clone);
+  applyHealthVisuals(clone, deviceData.health_score);
 
   addWarrantyIndicator(clone, deviceData.warranty_expiry);
 
-  console.log(`✓ Spawned ${deviceData.product.name}`);
+  console.log(`✓ Spawned ${deviceData.product.name} at Y=${adjustedY.toFixed(2)}`);
 
   return clone;
 }
-
 function addWarrantyIndicator(mesh, warrantyExpiry) {
   if (!warrantyExpiry) return;
   
@@ -1138,31 +1223,28 @@ function select3DMesh(mesh) {
 }
 
 function deselectAll3D(shouldResetCamera = false) {
-  if (state3D.blinkTween) { state3D.blinkTween.stop(); state3D.blinkTween = null }
-  
+  if (state3D.blinkTween) { state3D.blinkTween.stop(); state3D.blinkTween = null; }
+
   if (state3D.selectedMesh) {
-    // Safety check: only clone if originalMat exists
-    if (state3D.selectedMesh.userData.originalMat) {
-      state3D.selectedMesh.material = state3D.selectedMesh.userData.originalMat.clone()
-      state3D.selectedMesh.material.clippingPlanes = [floorPlane]
-    } else {
-      console.warn('⚠️ originalMat not found, skipping material reset');
-    }
-    state3D.selectedMesh = null
+    // Restore original material AND health emissive
+    state3D.selectedMesh.traverse(c => {
+      if (!c.isMesh) return;
+      if (c.userData.originalMat) {
+        c.material = c.userData.originalMat.clone();
+        c.material.clippingPlanes = [floorPlane];
+        // Restore health emissive
+        if (c.userData.originalEmissive) {
+          c.material.emissive = c.userData.originalEmissive.clone();
+          c.material.emissiveIntensity = c.userData.originalEmissiveIntensity || 0;
+        }
+      }
+    });
+    state3D.selectedMesh = null;
   }
 
   if (shouldResetCamera) {
-    const floorVal = parseInt(document.getElementById('floorSelect').value) || 1
-    const baseHeight = (floorVal - 1) * FLOOR_HEIGHT
-    const returnY = baseHeight + EYE_LEVEL
-    
     floorPlane.constant = 1000;
-
-    controls.setLookAt(
-        8, returnY, 8,     
-        0, returnY, 0,     
-        true
-    )
+    controls.setLookAt(8, EYE_LEVEL, 8, 0, EYE_LEVEL, 0, true);
   }
 }
 
@@ -1251,20 +1333,16 @@ document.getElementById('bg').addEventListener('drop', async (e) => {
 async function spawnDeviceAndSave(typeKey, position) {
   console.log(`📦 Attempting spawn: ${typeKey}`);
 
-  // 🔴 Ensure templates exist
   if (!meshTemplates || Object.keys(meshTemplates).length === 0) {
     console.error("❌ GLB templates not ready yet");
     alert("⚠️ Please wait for 3D models to load before adding devices.");
     return null;
   }
 
-  // 🔹 Try exact template match first
   let templateMesh = meshTemplates[typeKey];
 
-  // 🔹 Fallback match using normalized names
   if (!templateMesh) {
     const norm = normalizeName(typeKey);
-
     for (const key in meshTemplates) {
       if (
         normalizeName(key).includes(norm) ||
@@ -1277,18 +1355,13 @@ async function spawnDeviceAndSave(typeKey, position) {
     }
   }
 
-  // 🔴 Still not found → abort safely
   if (!templateMesh) {
     console.error(`❌ Cannot spawn ${typeKey}: No template mesh found.`);
-    console.log("Available templates:", Object.keys(meshTemplates));
     alert(`❌ Cannot spawn ${typeKey}\n\nTemplate not found in GLB file.`);
     return null;
   }
 
-  // 🔹 Fetch product catalog
   const products = await fetch(`${API_URL}/products/`).then(r => r.json());
-  
-  // Match ignoring case + allow partial matches
   const product = products.find(p =>
     p.mesh_identifier &&
     p.mesh_identifier.toLowerCase().includes(typeKey.toLowerCase())
@@ -1300,36 +1373,27 @@ async function spawnDeviceAndSave(typeKey, position) {
     return null;
   }
 
-  // 🔥 CORRECTED FIX: Calculate proper floor position
-  // Get bounding box of the template
-  const bbox = new THREE.Box3().setFromObject(templateMesh);
-  
-  // Calculate how far the bottom of the object is from its origin
-  // If min.y is negative, bottom is below origin
-  // If min.y is positive, bottom is above origin
+  // Calculate bbox from local space to get true bottom offset
+  const tempClone = templateMesh.clone(true);
+  tempClone.position.set(0, 0, 0);
+  tempClone.rotation.set(0, 0, 0);
+  tempClone.scale.set(1, 1, 1);
+  tempClone.updateMatrixWorld(true);
+  const bbox = new THREE.Box3().setFromObject(tempClone);
   const bottomOffset = bbox.min.y;
-  
-  // 🔥 KEY FIX: Subtract min.y to raise the object
-  // This ensures the BOTTOM of the bbox sits at position.y (floor surface)
   const adjustedY = position.y - bottomOffset;
-  
-  const floorNumber = Math.max(1, Math.floor(adjustedY / FLOOR_HEIGHT) + 1);
+  const floorNumber = Math.max(1, Math.floor(position.y / FLOOR_HEIGHT) + 1);
 
-  console.log(`📍 Drop position (raycast hit): Y = ${position.y.toFixed(2)}`);
-  console.log(`📦 Bounding box: min.y = ${bbox.min.y.toFixed(2)}, max.y = ${bbox.max.y.toFixed(2)}`);
-  console.log(`📏 Height: ${(bbox.max.y - bbox.min.y).toFixed(2)}`);
-  console.log(`⬆️  Adjusted Y position: ${adjustedY.toFixed(2)} (raised by ${(-bottomOffset).toFixed(2)})`);
-  console.log(`🏢 Floor number: ${floorNumber}`);
+  console.log(`📍 Drop Y=${position.y.toFixed(2)}, localBottom=${bottomOffset.toFixed(2)}, adjustedY=${adjustedY.toFixed(2)}`);
 
-  // 🔹 Create device in backend
-  const newDevice = await createDevice(
+const newDevice = await createDevice(
     product.id,
     CURRENT_WAREHOUSE_ID,
     floorNumber,
     position.x,
-    adjustedY,  // Use corrected Y position
+    position.y,   // ← changed from adjustedY to position.y
     position.z
-  );
+);
 
   if (!newDevice) {
     console.error("❌ Failed to create device in database");
@@ -1339,37 +1403,25 @@ async function spawnDeviceAndSave(typeKey, position) {
 
   console.log(`✅ Device created in database:`, newDevice);
 
-  // 🔥 FIX 2: Properly spawn and integrate into DEVICE_DB
-  // Use spawnDeviceFromDatabase which handles everything correctly
   const mesh = spawnDeviceFromDatabase(newDevice);
-  
+
   if (!mesh) {
     console.error("❌ Failed to spawn device in 3D scene");
     return null;
   }
 
-  // 🔹 Animate spawn
-  const startScale = 1;
   mesh.scale.set(0, 0, 0);
-
   new TWEEN.Tween(mesh.scale)
-    .to({ x: startScale, y: startScale, z: startScale }, 600)
+    .to({ x: 1, y: 1, z: 1 }, 600)
     .easing(TWEEN.Easing.Back.Out)
     .start();
 
-  // 🔹 Refresh datasheet to show new device
   buildDatasheet();
-  
-  // 🔹 Update warehouse info
   updateWarehouseInfo();
 
-  console.log(`✅ Device spawned and fully integrated: ${newDevice.serial_number}`);
-  console.log(`✓ Final position: (${mesh.position.x.toFixed(2)}, ${mesh.position.y.toFixed(2)}, ${mesh.position.z.toFixed(2)})`);
-  
-  // 🔹 Select the new device to show info panel
   setTimeout(() => {
     select3DMesh(mesh);
-  }, 650); // After spawn animation
+  }, 650);
 
   return mesh;
 }
